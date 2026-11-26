@@ -30,6 +30,25 @@ export interface Finding {
   evidence: string;
   /** 0..1 */
   confidence: number;
+  /** Regex (1 grupo de captura) que lê este preço no texto da página; sugerida pela IA na descoberta. */
+  priceRegex?: string;
+}
+
+/** Como ler o preço de uma página sem IA: regex com 1 grupo de captura sobre o texto visível, ou dados estruturados. */
+export type PriceRule = { type: 'regex'; pattern: string } | { type: 'generic' };
+export type ReadMethod = 'rule' | 'generic' | 'ai';
+export type CheckMode = 'routine' | 'discovery' | 'fallback';
+export type SourceStatus = 'ok' | 'failing' | 'unreadable';
+
+/** Resultado da leitura de uma fonte (site) numa verificação. */
+export interface SourceResult {
+  sourceId?: number;
+  url: string;
+  label?: string;
+  ok: boolean;
+  method?: ReadMethod;
+  value?: number;
+  error?: string;
 }
 
 export const MIN_INTERVAL_MINUTES = 15;
