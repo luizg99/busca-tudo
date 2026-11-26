@@ -72,6 +72,7 @@ async function viewTrackers() {
   for (const t of list) {
     const checks = await api('GET', `/trackers/${t.id}/checks?limit=1`).catch(() => []);
     const last = checks[0];
+    const stats = await api('GET', `/trackers/${t.id}/stats`).catch(() => undefined);
     const best = last?.findings?.filter((f) => f.found && f.value != null && f.confidence >= 0.6 && (!f.currency || f.currency === 'BRL')).sort((a, b) => a.value - b.value)[0];
     const state = !last ? 'nunca verificado' : last.ok ? `última: ${when(last.at)}` : `falhou em ${when(last.at)}: ${last.error}`;
     const result = h('span', { class: 'muted' });
@@ -81,7 +82,7 @@ async function viewTrackers() {
           h('strong', {}, t.name), ' ', h('span', { class: 'pill' }, KIND[t.kind]), ' ',
           t.status === 'paused' ? h('span', { class: 'pill warn' }, 'pausado') : null,
           h('div', { class: 'muted' }, `${t.goal} · a cada ${t.intervalMinutes} min · alerta ${COND(t.alertCondition)}`),
-          h('div', { class: last && !last.ok ? 'bad' : 'muted' }, state, best ? ` · melhor: ${money(best.value, best.currency)}` : ''),
+          h('div', { class: last && !last.ok ? 'bad' : 'muted' }, state, best ? ` · última leitura: ${money(best.value, best.currency)}` : '', stats?.min != null ? ` · menor em 7 dias: ${money(stats.min)}` : ''),
           result),
         h('button', { onclick: async (e) => { e.target.disabled = true; result.textContent = 'Verificando…'; try { const r = await api('POST', `/trackers/${t.id}/check`); result.textContent = r.ok ? (r.alerted ? 'Alerta enviado!' : r.baseline ? 'Linha de base registrada.' : 'Verificado, sem novidades.') : `Falhou: ${r.error}`; } catch (err) { result.textContent = err.message; } await render(); } }, 'Verificar agora'),
         h('button', { onclick: async () => { await api('PATCH', `/trackers/${t.id}`, { status: t.status === 'active' ? 'paused' : 'active' }); await render(); } }, t.status === 'active' ? 'Pausar' : 'Retomar'),
