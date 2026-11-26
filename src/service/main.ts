@@ -97,6 +97,11 @@ async function main(): Promise<void> {
     whatsappStatus: () => ({ status: waStatus, ...(waQr ? { qr: waQr } : {}) }),
     newSetupSession: () => (llm ? new SetupSession(llm, readSettings(db).models.setup ?? DEFAULT_MODELS.setup, recordSpend('setup')) : undefined),
     runCheckNow,
+    sendTestMessage: async () => {
+      if (waStatus !== 'ready') return { ok: false, error: 'O WhatsApp não está conectado. Escaneie o QR em Configurações.' };
+      const delivered = await notifier.sendInfo('✅ Teste do busca-tudo: se você está lendo isto, os avisos vão chegar por aqui.');
+      return delivered ? { ok: true } : { ok: false, error: 'Não consegui enviar a mensagem de teste. Veja o service.log.' };
+    },
     buildId: String(statSync(__filename).mtimeMs),
     shutdown: () => void shutdown(),
   });

@@ -181,6 +181,7 @@ async function viewReports(days = 30) {
 }
 
 /* ---------- Configurações ---------- */
+let settingsWa; // estado do WhatsApp quando a tela foi desenhada
 async function viewSettings() {
   const s = await api('GET', '/settings');
   const startup = await bt.startupGet();
@@ -194,7 +195,18 @@ async function viewSettings() {
   const msg = h('span', { class: 'muted' });
   const field = (label, el) => h('label', { class: 'field' }, h('span', {}, label), el);
   const st = await bt.status();
+  settingsWa = st.ok ? st.data.whatsapp : 'down';
   const qr = st.ok && st.data.qrImage ? h('div', {}, h('p', {}, 'Abra o WhatsApp no celular → Aparelhos conectados → Conectar um aparelho e escaneie:'), h('img', { class: 'qr', src: st.data.qrImage, alt: 'QR code do WhatsApp' })) : h('p', { class: 'muted' }, st.ok && st.data.whatsapp === 'ready' ? 'WhatsApp conectado.' : 'Aguardando o WhatsApp iniciar… (o QR aparece aqui)');
+  const testMsg = h('span', { class: 'muted' });
+  const testBtn = h('button', { onclick: async (e) => {
+    e.target.disabled = true; testMsg.className = 'muted'; testMsg.textContent = 'Enviando…';
+    try {
+      const r = await api('POST', '/whatsapp/test');
+      testMsg.className = r.ok ? 'ok' : 'bad';
+      testMsg.textContent = r.ok ? 'Enviada! Confira no WhatsApp (conversa com você mesmo).' : r.error;
+    } catch (err) { testMsg.className = 'bad'; testMsg.textContent = err.message; }
+    e.target.disabled = false;
+  } }, 'Enviar mensagem de teste');
   const save = h('button', { class: 'primary', onclick: async () => {
     try {
       const body = { models: { setup: mSetup.value, routine: mRoutine.value, escalate: mEsc.value }, limitDayUsd: day.value === '' ? null : Number(day.value), limitMonthUsd: month.value === '' ? null : Number(month.value), sendReportsToWhatsApp: wa.checked };
@@ -213,7 +225,7 @@ async function viewSettings() {
     h('div', { class: 'card' }, h('h2', {}, 'Geral'),
       h('label', { class: 'row' }, wa, 'Enviar resumos (relatórios) também no WhatsApp'),
       h('label', { class: 'row' }, boot, 'Iniciar o serviço junto com o Windows')),
-    h('div', { class: 'card' }, h('h2', {}, 'WhatsApp'), qr),
+    h('div', { class: 'card' }, h('h2', {}, 'WhatsApp'), qr, h('div', { class: 'row' }, testBtn, testMsg)),
     h('div', { class: 'row' }, save, msg));
 }
 
@@ -224,7 +236,8 @@ async function render(arg) {
   try {
     const node = current === 'trackers' ? await viewTrackers() : current === 'chat' ? viewChat() : current === 'reports' ? await viewReports(arg) : await viewSettings();
     view.replaceChildren(node);
-    if (current === 'settings') pollTimer = setInterval(async () => { const st = await bt.status(); if (st.ok && (st.data.qrImage || st.data.whatsapp === 'ready') && current === 'settings' && !document.activeElement?.matches('input')) { render(); } }, 5000);
+    // só redesenha quando o estado do WhatsApp muda (ex.: QR → conectado), para não apagar o que o usuário digitou nem mensagens de resultado
+    if (current === 'settings') pollTimer = setInterval(async () => { const st = await bt.status(); const now = st.ok ? st.data.whatsapp : 'down'; if (current === 'settings' && now !== settingsWa && !document.activeElement?.matches('input')) { render(); } }, 5000);
   } catch (e) {
     view.replaceChildren(h('p', { class: 'bad' }, e.message));
   }

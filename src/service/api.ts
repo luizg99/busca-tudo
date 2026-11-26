@@ -26,6 +26,8 @@ export interface ApiDeps {
   /** Identifica o código em execução; o app usa para reiniciar um serviço desatualizado. */
   buildId: string;
   shutdown(): void;
+  /** Envia uma mensagem de teste pelo WhatsApp conectado. */
+  sendTestMessage(): Promise<{ ok: boolean; error?: string }>;
 }
 
 class HttpError extends Error {
@@ -118,6 +120,10 @@ export function createApi(deps: ApiDeps): Server {
         spentDayUsd: spentSince(db, new Date(deps.now().getFullYear(), deps.now().getMonth(), deps.now().getDate()).toISOString()),
         spentMonthUsd: spentSince(db, new Date(deps.now().getFullYear(), deps.now().getMonth(), 1).toISOString()),
       });
+    }
+
+    if (method === 'POST' && path === '/whatsapp/test') {
+      return send(res, 200, await deps.sendTestMessage());
     }
 
     if (method === 'POST' && path === '/shutdown') {

@@ -35,6 +35,7 @@ async function start(over: Partial<ApiDeps> = {}) {
     runCheckNow: async () => ({ ok: true, alerted: false, baseline: true }),
     buildId: 'build-1',
     shutdown: () => undefined,
+    sendTestMessage: async () => ({ ok: true }),
     ...over,
   };
   server = createApi(deps);
@@ -112,6 +113,24 @@ describe('api', () => {
     const r = await call('GET', '/status');
     expect(r.json.spentDayUsd).toBeCloseTo(0.25, 6);
     expect(r.json.spentMonthUsd).toBeCloseTo(0.25, 6);
+  });
+
+  it('POST /whatsapp/test exige token e devolve o resultado do envio de teste', async () => {
+    let calls = 0;
+    const { call } = await start({ sendTestMessage: async () => { calls++; return { ok: true }; } });
+    expect((await call('POST', '/whatsapp/test', undefined, null)).status).toBe(401);
+    expect(calls).toBe(0);
+    const r = await call('POST', '/whatsapp/test');
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ ok: true });
+    expect(calls).toBe(1);
+  });
+
+  it('POST /whatsapp/test devolve a mensagem de erro quando o WhatsApp não está conectado', async () => {
+    const { call } = await start({ sendTestMessage: async () => ({ ok: false, error: 'WhatsApp não está conectado.' }) });
+    const r = await call('POST', '/whatsapp/test');
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ ok: false, error: 'WhatsApp não está conectado.' });
   });
 
   it('GET /status informa o buildId do código em execução', async () => {
