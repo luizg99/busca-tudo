@@ -20,6 +20,13 @@ const money = (n, cur) => (n == null ? '—' : `${!cur || cur === 'BRL' ? 'R$' :
 const when = (iso) => (iso ? new Date(iso).toLocaleString('pt-BR') : '—');
 const link = (url, label) => h('a', { class: 'link', onclick: () => bt.openExternal(url) }, label || url);
 const KIND = { price: 'preço', news: 'notícias', generic: 'geral' };
+/** Quando o serviço deve verificar de novo (ele confere a cada 30 s, então pode levar até meio minuto a mais). */
+function nextCheckLabel(t, last, overLimit) {
+  if (t.status !== 'active') return 'pausado: não será verificado';
+  if (overLimit) return 'aguardando: limite de custo atingido';
+  const due = last ? Date.parse(last.at) + t.intervalMinutes * 60000 : Date.now();
+  return due <= Date.now() ? 'próxima consulta: em instantes' : `próxima consulta: ${new Date(due).toLocaleString('pt-BR')}`;
+}
 const COND = (c) => (c.type === 'below_last' ? 'abaixo do último valor' : c.type === 'below_value' ? `abaixo de ${money(c.value)}` : 'qualquer novidade');
 
 async function api(method, path, body) {
@@ -82,6 +89,7 @@ async function viewTrackers() {
           h('strong', {}, t.name), ' ', h('span', { class: 'pill' }, KIND[t.kind]), ' ',
           t.status === 'paused' ? h('span', { class: 'pill warn' }, 'pausado') : null,
           h('div', { class: 'muted' }, `${t.goal} · a cada ${t.intervalMinutes} min · alerta ${COND(t.alertCondition)}`),
+          h('div', { class: 'muted' }, nextCheckLabel(t, last, lastStatus?.overLimit)),
           h('div', { class: last && !last.ok ? 'bad' : 'muted' }, state, best ? ` · última leitura: ${money(best.value, best.currency)}` : '', stats?.min != null ? ` · menor em 7 dias: ${money(stats.min)}` : ''),
           result),
         h('button', { onclick: async (e) => { e.target.disabled = true; result.textContent = 'Verificando…'; try { const r = await api('POST', `/trackers/${t.id}/check`); result.textContent = r.ok ? (r.alerted ? 'Alerta enviado!' : r.baseline ? 'Linha de base registrada.' : 'Verificado, sem novidades.') : `Falhou: ${r.error}`; } catch (err) { result.textContent = err.message; } await render(); } }, 'Verificar agora'),
