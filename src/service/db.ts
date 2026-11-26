@@ -207,6 +207,12 @@ export function openDb(path: string) {
         .get(trackerId) as any;
       return r?.at;
     },
+    lastAlert(trackerId: number): AlertRow | undefined {
+      const r = raw
+        .prepare('SELECT * FROM alerts WHERE tracker_id = ? ORDER BY at DESC, id DESC LIMIT 1')
+        .get(trackerId);
+      return r ? toAlert(r) : undefined;
+    },
     getSetting(key: string): string | undefined {
       const r = raw.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any;
       return r?.value;

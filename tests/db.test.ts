@@ -74,3 +74,14 @@ describe('db', () => {
     expect(db.listReports({ since: '2026-01-02T00:00:00Z' }).map((r) => r.text)).toEqual(['r2']);
   });
 });
+
+describe('db.lastAlert', () => {
+  it('devolve o alerta mais recente com sourceUrl', () => {
+    const db = openDb(':memory:');
+    const t = db.createTracker(nt());
+    expect(db.lastAlert(t.id)).toBeUndefined();
+    db.addAlert({ trackerId: t.id, at: '2026-01-01T00:00:00Z', text: 'a', sourceUrl: 'u1', delivered: true });
+    db.addAlert({ trackerId: t.id, at: '2026-01-02T00:00:00Z', text: 'b', sourceUrl: 'u2', delivered: false });
+    expect(db.lastAlert(t.id)).toMatchObject({ at: '2026-01-02T00:00:00Z', sourceUrl: 'u2' });
+  });
+});
