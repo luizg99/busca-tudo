@@ -1,0 +1,19 @@
+{
+  "name": "busca-tudo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Acompanhamentos pessoais com IA, alertas no WhatsApp e relatórios",
+  "main": "dist/app/main.js",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "service": "node dist/service/main.js",
+    "app": "electron ."
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/node": "^26.6.11",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.2"
+  }
+}
