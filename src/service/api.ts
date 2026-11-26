@@ -23,6 +23,9 @@ export interface ApiDeps {
   whatsappStatus(): { status: WhatsAppStatus; qr?: string };
   newSetupSession(): SetupSession | undefined;
   runCheckNow(trackerId: number): Promise<CheckResultSummary>;
+  /** Identifica o código em execução; o app usa para reiniciar um serviço desatualizado. */
+  buildId: string;
+  shutdown(): void;
 }
 
 class HttpError extends Error {
@@ -106,6 +109,7 @@ export function createApi(deps: ApiDeps): Server {
       const lastCheck = db.raw.prepare('SELECT MAX(at) AS at FROM checks').get() as { at: string | null };
       return send(res, 200, {
         running: true,
+        buildId: deps.buildId,
         whatsapp: wa.status,
         ...(wa.qr ? { qr: wa.qr } : {}),
         hasApiKey: deps.hasApiKey(),
@@ -114,6 +118,12 @@ export function createApi(deps: ApiDeps): Server {
         spentDayUsd: spentSince(db, new Date(deps.now().getFullYear(), deps.now().getMonth(), deps.now().getDate()).toISOString()),
         spentMonthUsd: spentSince(db, new Date(deps.now().getFullYear(), deps.now().getMonth(), 1).toISOString()),
       });
+    }
+
+    if (method === 'POST' && path === '/shutdown') {
+      send(res, 200, { ok: true });
+      setTimeout(() => deps.shutdown(), 50);
+      return;
     }
 
     if (path === '/settings') {

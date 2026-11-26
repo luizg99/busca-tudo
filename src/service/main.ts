@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { createApi, DEFAULT_MODELS, readSettings } from './api';
@@ -97,6 +97,8 @@ async function main(): Promise<void> {
     whatsappStatus: () => ({ status: waStatus, ...(waQr ? { qr: waQr } : {}) }),
     newSetupSession: () => (llm ? new SetupSession(llm, readSettings(db).models.setup ?? DEFAULT_MODELS.setup, recordSpend('setup')) : undefined),
     runCheckNow,
+    buildId: String(statSync(__filename).mtimeMs),
+    shutdown: () => void shutdown(),
   });
 
   const port = Number(process.env.BUSCA_TUDO_PORT ?? DEFAULT_PORT);

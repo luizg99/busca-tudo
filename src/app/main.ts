@@ -1,9 +1,10 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import QRCode from 'qrcode';
 import { ApiError, createApiClient, isServiceUp, type ApiClient } from './apiClient';
+import { ensureService as ensureServiceVersion } from './serviceManager';
 import { installStartup, isStartupInstalled, removeStartup } from './startup';
 
 const PORT = Number(process.env.BUSCA_TUDO_PORT ?? 47831);
@@ -84,8 +85,22 @@ function registerIpc(): void {
 
 async function ensureService(): Promise<void> {
   const c = client();
-  if (c && (await isServiceUp(c))) return;
-  startService();
+  const localBuildId = existsSync(servicePath) ? String(statSync(servicePath).mtimeMs) : '';
+  const result = await ensureServiceVersion({
+    getStatus: async () => {
+      if (!c) throw new Error('sem token');
+      return c.get('/status');
+    },
+    shutdown: async () => {
+      if (!c) throw new Error('sem token');
+      await c.post('/shutdown');
+    },
+    isUp: async () => (c ? isServiceUp(c) : false),
+    start: startService,
+    localBuildId,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  });
+  if (result === 'stale') console.warn('Serviço desatualizado ou que não encerrou: reinicie-o manualmente.');
 }
 
 function createWindow(): void {

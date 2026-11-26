@@ -33,6 +33,8 @@ async function start(over: Partial<ApiDeps> = {}) {
     whatsappStatus: () => ({ status: 'disconnected' }),
     newSetupSession: () => new SetupSession(llm, 'm'),
     runCheckNow: async () => ({ ok: true, alerted: false, baseline: true }),
+    buildId: 'build-1',
+    shutdown: () => undefined,
     ...over,
   };
   server = createApi(deps);
@@ -110,6 +112,21 @@ describe('api', () => {
     const r = await call('GET', '/status');
     expect(r.json.spentDayUsd).toBeCloseTo(0.25, 6);
     expect(r.json.spentMonthUsd).toBeCloseTo(0.25, 6);
+  });
+
+  it('GET /status informa o buildId do código em execução', async () => {
+    const { call } = await start();
+    expect((await call('GET', '/status')).json.buildId).toBe('build-1');
+  });
+
+  it('POST /shutdown exige token e, autorizado, responde e pede o desligamento', async () => {
+    let called = 0;
+    const { call } = await start({ shutdown: () => { called++; } });
+    expect((await call('POST', '/shutdown', undefined, null)).status).toBe(401);
+    expect(called).toBe(0);
+    expect((await call('POST', '/shutdown')).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(called).toBe(1);
   });
 
   it('PUT /settings guarda a chave e nunca a devolve em nenhuma resposta', async () => {
