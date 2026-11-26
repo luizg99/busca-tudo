@@ -27,7 +27,7 @@ npm run service    # (opcional) roda só o serviço
 npm test           # testes
 ```
 
-1. Em **Configurações**, informe a chave da Anthropic e escaneie o QR do WhatsApp (conexão via Baileys, sem navegador; a sessão fica em `%APPDATA%usca-tudo\wa-auth`).
+1. Em **Configurações**, informe a chave da Anthropic e escaneie o QR do WhatsApp (conexão via Baileys, sem navegador; a sessão fica em `%APPDATA%\busca-tudo\wa-auth`).
 2. Em **Novo acompanhamento**, descreva o que quer acompanhar e responda às perguntas.
 3. Marque **Iniciar o serviço junto com o Windows** para o serviço subir a cada logon.
 
