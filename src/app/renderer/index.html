@@ -8,27 +8,47 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header id="statusbar">
-    <strong class="brand">busca-tudo</strong>
-    <span id="st-service" class="pill">serviço…</span>
-    <span id="st-whatsapp" class="pill">WhatsApp…</span>
-    <span id="st-key" class="pill">chave…</span>
-    <span id="st-spend" class="pill" title="Gasto estimado com a IA">gasto…</span>
-    <span id="st-limit" class="pill warn hidden">limite de custo atingido</span>
-  </header>
-  <div id="banner" class="banner hidden">
-    <span id="banner-text"></span>
-    <button id="banner-btn" class="primary hidden">Iniciar serviço</button>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+          <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a6eeb"/><stop offset="1" stop-color="#1c42b0"/></linearGradient></defs>
+          <rect width="48" height="48" rx="11" fill="url(#g)"/>
+          <circle cx="21" cy="21" r="9" fill="none" stroke="#fff" stroke-width="3.4"/>
+          <path d="M28 28l9 9" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>
+        </svg>
+        <div><strong>busca-tudo</strong><small>acompanhamentos com IA</small></div>
+      </div>
+
+      <nav id="nav" aria-label="Seções">
+        <button data-view="trackers" class="active"><span class="ico" data-icon="list"></span>Acompanhamentos</button>
+        <button data-view="chat"><span class="ico" data-icon="plus"></span>Novo acompanhamento</button>
+        <button data-view="reports"><span class="ico" data-icon="chart"></span>Relatórios</button>
+        <button data-view="settings"><span class="ico" data-icon="sliders"></span>Configurações</button>
+      </nav>
+
+      <section id="system" aria-label="Estado do sistema">
+        <h2>Sistema</h2>
+        <div class="sys-row" id="sys-service"><i class="dot"></i><span>Serviço</span><b>…</b></div>
+        <div class="sys-row" id="sys-wa"><i class="dot"></i><span>WhatsApp</span><b>…</b></div>
+        <div class="sys-row" id="sys-key"><i class="dot"></i><span>Chave da IA</span><b>…</b></div>
+        <div class="spend" id="sys-spend">
+          <div class="spend-top"><span>Gasto hoje</span><b id="spend-text">—</b></div>
+          <div class="bar"><div id="spend-bar"></div></div>
+          <small id="spend-sub"></small>
+        </div>
+      </section>
+    </aside>
+
+    <div id="main">
+      <div id="banner" class="banner hidden" role="status">
+        <span id="banner-text"></span>
+        <button id="banner-btn" class="btn primary sm hidden">Iniciar serviço</button>
+      </div>
+      <main id="view" tabindex="-1"></main>
+    </div>
   </div>
-  <div id="layout">
-    <nav id="nav">
-      <button data-view="trackers" class="active">Acompanhamentos</button>
-      <button data-view="chat">Novo acompanhamento</button>
-      <button data-view="reports">Relatórios</button>
-      <button data-view="settings">Configurações</button>
-    </nav>
-    <main id="view"></main>
-  </div>
+  <div id="toasts" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>
 </html>
