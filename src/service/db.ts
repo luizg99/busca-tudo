@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { AlertCondition, Finding, NewTracker, Tracker } from '../shared/types';
+import { reliableValue } from './decide';
 
 export interface CheckInput {
   trackerId: number;
@@ -62,6 +63,9 @@ CREATE TABLE IF NOT EXISTS reports (
   text TEXT NOT NULL, at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS spend (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, usd REAL NOT NULL, source TEXT NOT NULL
+);
 `;
 
 type TrackerPatch = Partial<NewTracker & { status: Tracker['status'] }>;
@@ -172,10 +176,8 @@ export function openDb(path: string) {
         .prepare('SELECT findings_json FROM checks WHERE tracker_id = ? AND ok = 1 ORDER BY at DESC, id DESC')
         .all(trackerId) as any[];
       for (const r of rows) {
-        const vals = (JSON.parse(r.findings_json) as Finding[])
-          .filter((f) => f.found && typeof f.value === 'number')
-          .map((f) => f.value as number);
-        if (vals.length) return Math.min(...vals);
+        const v = reliableValue(JSON.parse(r.findings_json));
+        if (v !== undefined) return v;
       }
       return undefined;
     },
@@ -206,6 +208,10 @@ export function openDb(path: string) {
         .prepare('SELECT at FROM alerts WHERE tracker_id = ? ORDER BY at DESC, id DESC LIMIT 1')
         .get(trackerId) as any;
       return r?.at;
+    },
+    /** Gastos de IA que não pertencem a uma verificação (conversa de cadastro, resumos). */
+    addSpend(s: { at: string; usd: number; source: string }): void {
+      raw.prepare('INSERT INTO spend (at, usd, source) VALUES (?,?,?)').run(s.at, s.usd, s.source);
     },
     lastAlert(trackerId: number): AlertRow | undefined {
       const r = raw

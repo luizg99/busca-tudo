@@ -104,6 +104,14 @@ describe('api', () => {
     expect(r.json).toMatchObject({ running: true, hasApiKey: false, whatsapp: 'disconnected', overLimit: false });
   });
 
+  it('GET /status expõe o gasto do dia e do mês (conversa e resumos incluídos)', async () => {
+    const { call, db } = await start();
+    db.addSpend({ at: '2026-01-01T09:00:00Z', usd: 0.25, source: 'setup' });
+    const r = await call('GET', '/status');
+    expect(r.json.spentDayUsd).toBeCloseTo(0.25, 6);
+    expect(r.json.spentMonthUsd).toBeCloseTo(0.25, 6);
+  });
+
   it('PUT /settings guarda a chave e nunca a devolve em nenhuma resposta', async () => {
     const { call } = await start();
     const secret = 'sk-ant-SEGREDO-999';

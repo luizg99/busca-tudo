@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { createApi, DEFAULT_MODELS, readSettings } from './api';
+import { estimateCostUsd, overLimit, type Usage } from './cost';
 import { openDb } from './db';
 import { loadApiKey, saveApiKey } from './secrets';
 import { createAnthropicClient, type LlmClient } from './llm';
@@ -60,11 +61,19 @@ async function main(): Promise<void> {
         void notifier.flushPending();
       }
     },
+    log,
   );
   notifier = new Notifier(db, transport, now);
 
+  // Limites padrão na primeira execução, para o gasto nunca ficar sem teto sem o usuário saber.
+  if (db.getSetting('limit_day_usd') === undefined) db.setSetting('limit_day_usd', '2');
+  if (db.getSetting('limit_month_usd') === undefined) db.setSetting('limit_month_usd', '30');
+  const recordSpend = (source: string) => (u: Usage) => db.addSpend({ at: now().toISOString(), usd: estimateCostUsd(u), source });
+
   const runCheckNow = async (id: number) => {
     if (!llm) return { ok: false, alerted: false, baseline: false, error: 'Chave da Anthropic não configurada.' };
+    const lim = overLimit(db, now());
+    if (lim.over) return { ok: false, alerted: false, baseline: false, error: `Limite de custo ${lim.period === 'day' ? 'diário' : 'mensal'} atingido.` };
     return runCheck({ db, llm, notifier, models: readSettings(db).models, now }, id);
   };
 
@@ -88,7 +97,7 @@ async function main(): Promise<void> {
       llm = createAnthropicClient(k);
     },
     whatsappStatus: () => ({ status: waStatus, ...(waQr ? { qr: waQr } : {}) }),
-    newSetupSession: () => (llm ? new SetupSession(llm, readSettings(db).models.setup ?? DEFAULT_MODELS.setup) : undefined),
+    newSetupSession: () => (llm ? new SetupSession(llm, readSettings(db).models.setup ?? DEFAULT_MODELS.setup, recordSpend('setup')) : undefined),
     runCheckNow,
   });
 
@@ -97,21 +106,23 @@ async function main(): Promise<void> {
     log(`api error: ${e.code ?? e.message}`);
     if (e.code === 'EADDRINUSE') process.exit(1);
   });
-  server.listen(port, '127.0.0.1', () => log(`api listening on 127.0.0.1:${port}`));
-
-  scheduler.start();
-  setInterval(() => void notifier.flushPending(), 60_000);
-  setInterval(() => {
-    if (!llm) return;
-    const s = readSettings(db);
-    for (const period of dueDigests(db, now())) {
-      generateDigest({ db, llm, notifier, model: s.models.routine, sendWhatsApp: s.sendReportsToWhatsApp, now }, period).catch((e) =>
-        log(`digest ${period} failed: ${e}`),
-      );
-    }
-  }, 5 * 60_000);
-
-  transport.start().catch((e) => log(`whatsapp start failed: ${e}`));
+  // Só começa a trabalhar depois de conseguir a porta: uma segunda instância morre por EADDRINUSE
+  // sem ter chamado a IA nem aberto o WhatsApp (que disputaria o mesmo perfil do Chrome).
+  server.listen(port, '127.0.0.1', () => {
+    log(`api listening on 127.0.0.1:${port}`);
+    scheduler.start();
+    setInterval(() => void notifier.flushPending(), 60_000);
+    setInterval(() => {
+      if (!llm) return;
+      const s = readSettings(db);
+      for (const period of dueDigests(db, now())) {
+        generateDigest({ db, llm, notifier, model: s.models.routine, sendWhatsApp: s.sendReportsToWhatsApp, now, onUsage: recordSpend('digest') }, period).catch((e) =>
+          log(`digest ${period} failed: ${e}`),
+        );
+      }
+    }, 5 * 60_000);
+    transport.start().catch((e) => log(`whatsapp start failed: ${e}`));
+  });
 
   const shutdown = async () => {
     scheduler.stop();

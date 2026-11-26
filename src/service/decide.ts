@@ -5,6 +5,8 @@ export const ALERT_COOLDOWN_MINUTES = 60;
 
 export interface DecisionContext {
   lastValue?: number;
+  /** Valor do último alerta enviado (qualquer loja), para suprimir oscilação. */
+  lastAlertValue?: number;
   /** Retorna true se o item ainda não foi visto (e o marca como visto). */
   isNew(key: string): boolean;
   lastAlertAt?: string;
@@ -16,6 +18,21 @@ export interface Decision {
   baseline: boolean;
   alert?: { text: string; sourceUrl?: string; value?: number };
   ignored: string[];
+}
+
+export const OSCILATION_WINDOW_HOURS = 24;
+
+const isBrl = (f: Finding): boolean => !f.currency || f.currency.toUpperCase() === 'BRL';
+
+/** Achado de preço que pode servir de referência: encontrado, confiável e em BRL. */
+export function isReliablePrice(f: Finding): boolean {
+  return f.found && typeof f.value === 'number' && f.value > 0 && f.confidence >= MIN_CONFIDENCE && isBrl(f);
+}
+
+/** Menor valor confiável de uma verificação (usado como "último valor" e nas estatísticas). */
+export function reliableValue(findings: Finding[]): number | undefined {
+  const vals = findings.filter(isReliablePrice).map((f) => f.value as number);
+  return vals.length ? Math.min(...vals) : undefined;
 }
 
 export function parsePrice(raw: unknown): number | undefined {
@@ -60,11 +77,22 @@ function withinCooldown(ctx: DecisionContext, sourceUrl: string | undefined): bo
   return elapsedMin < ALERT_COOLDOWN_MINUTES;
 }
 
+/** Mesmo valor (ou maior) que o último alertado, em qualquer loja, dentro da janela: é ruído de oscilação. */
+function repeatsLastAlert(ctx: DecisionContext, value: number): boolean {
+  if (!ctx.lastAlertAt || ctx.lastAlertValue === undefined) return false;
+  const elapsedH = (Date.parse(ctx.now) - Date.parse(ctx.lastAlertAt)) / 3600000;
+  return elapsedH < OSCILATION_WINDOW_HOURS && value >= ctx.lastAlertValue;
+}
+
 export function decideAlert(t: Tracker, findings: Finding[], ctx: DecisionContext): Decision {
   const ignored: string[] = [];
   const reliable: Finding[] = [];
   for (const f of findings) {
     if (!f.found) continue;
+    if (typeof f.value === 'number' && !isBrl(f)) {
+      ignored.push(`moeda ${f.currency} ignorada (só BRL é comparado): ${f.title ?? f.sourceUrl ?? f.evidence}`);
+      continue;
+    }
     if (f.confidence < MIN_CONFIDENCE) {
       ignored.push(`confiança baixa (${f.confidence}): ${f.title ?? f.sourceUrl ?? f.evidence}`);
       continue;
@@ -86,12 +114,14 @@ export function decideAlert(t: Tracker, findings: Finding[], ctx: DecisionContex
 
   let hit = false;
   if (t.alertCondition.type === 'below_value') {
-    hit = value < t.alertCondition.value;
+    // só alerta ao cruzar o limite (ou na primeira vez), não a cada verificação enquanto estiver abaixo
+    const limit = t.alertCondition.value;
+    hit = value < limit && (ctx.lastValue === undefined || ctx.lastValue >= limit);
   } else {
     if (ctx.lastValue === undefined) return { baseline: true, ignored };
     hit = value < ctx.lastValue;
   }
-  if (!hit || withinCooldown(ctx, best.sourceUrl)) return { baseline: false, ignored };
+  if (!hit || withinCooldown(ctx, best.sourceUrl) || repeatsLastAlert(ctx, value)) return { baseline: false, ignored };
 
   const before = ctx.lastValue !== undefined ? ` (antes ${brl(ctx.lastValue, best.currency)})` : '';
   const text = `📉 ${t.name}: ${brl(value, best.currency)}${before}${best.sourceUrl ? `\n${best.sourceUrl}` : ''}`;

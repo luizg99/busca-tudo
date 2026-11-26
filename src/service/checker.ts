@@ -4,7 +4,8 @@ import { MIN_CONFIDENCE, parsePrice } from './decide';
 import type { LlmClient } from './llm';
 
 export class CheckError extends Error {
-  constructor(message: string) {
+  /** Uso (e portanto custo) das chamadas já feitas antes da falha. */
+  constructor(message: string, public usages: Usage[] = []) {
     super(message);
     this.name = 'CheckError';
   }
@@ -75,9 +76,13 @@ async function once(llm: LlmClient, t: Tracker, model: string): Promise<{ findin
   } catch (e) {
     throw new CheckError(`Falha ao consultar a IA: ${(e as Error).message}`);
   }
-  const json: any = extractJson(res.text);
-  if (!json || !Array.isArray(json.findings)) throw new CheckError('Resposta da IA sem a lista "findings".');
-  return { findings: json.findings.map(normalize), usage: res.usage };
+  try {
+    const json: any = extractJson(res.text);
+    if (!json || !Array.isArray(json.findings)) throw new CheckError('Resposta da IA sem a lista "findings".');
+    return { findings: json.findings.map(normalize), usage: res.usage };
+  } catch (e) {
+    throw new CheckError((e as Error).message, [res.usage]);
+  }
 }
 
 function lowConfidence(findings: Finding[]): boolean {
@@ -92,6 +97,11 @@ export async function runSmartCheck(
 ): Promise<CheckOutcome> {
   const first = await once(llm, t, models.routine);
   if (!lowConfidence(first.findings)) return { findings: first.findings, usages: [first.usage], escalated: false };
-  const second = await once(llm, t, models.escalate);
+  let second;
+  try {
+    second = await once(llm, t, models.escalate);
+  } catch (e) {
+    throw new CheckError((e as Error).message, [first.usage, ...((e as CheckError).usages ?? [])]);
+  }
   return { findings: second.findings, usages: [first.usage, second.usage], escalated: true };
 }

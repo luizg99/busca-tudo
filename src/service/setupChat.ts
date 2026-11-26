@@ -1,4 +1,5 @@
 import { validateNewTracker, type NewTracker } from '../shared/types';
+import type { Usage } from './cost';
 import type { ChatMessage, LlmClient, ToolDef } from './llm';
 
 const SYSTEM = `Você ajuda o usuário a cadastrar acompanhamentos pessoais (preços, notícias e outras coisas da internet) em um app.
@@ -67,7 +68,7 @@ export class SetupSession {
   private history: ChatMessage[] = [];
   pending?: NewTracker;
 
-  constructor(private llm: LlmClient, private model: string) {}
+  constructor(private llm: LlmClient, private model: string, private onUsage?: (u: Usage) => void) {}
 
   async send(userText: string): Promise<{ reply: string; proposal?: NewTracker; errors?: string[] }> {
     this.pending = undefined;
@@ -76,6 +77,7 @@ export class SetupSession {
 
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const res = await this.llm.chat({ model: this.model, system: SYSTEM, messages: this.history, tools: [CREATE_TRACKER_TOOL] });
+      this.onUsage?.(res.usage);
       this.history.push({ role: 'assistant', content: res.content });
       const call = res.toolUses.find((u) => u.name === 'create_tracker');
       if (!call) return { reply: res.text, proposal: this.pending, ...(errors ? { errors } : {}) };

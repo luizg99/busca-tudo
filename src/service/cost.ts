@@ -22,8 +22,9 @@ export function estimateCostUsd(u: Usage): number {
 }
 
 export function spentSince(db: Db, sinceIso: string): number {
-  const r = db.raw.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS s FROM checks WHERE at >= ?').get(sinceIso) as { s: number };
-  return r.s;
+  const checks = db.raw.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS s FROM checks WHERE at >= ?').get(sinceIso) as { s: number };
+  const other = db.raw.prepare('SELECT COALESCE(SUM(usd), 0) AS s FROM spend WHERE at >= ?').get(sinceIso) as { s: number };
+  return checks.s + other.s;
 }
 
 export function overLimit(db: Db, now: Date): { over: boolean; period?: 'day' | 'month' } {

@@ -53,13 +53,15 @@ describe('runCheck', () => {
     expect(db.listChecks(t.id)[0].costUsd).toBeGreaterThan(0);
   });
 
-  it('oscilação 100→90→100→90: alerta, não alerta, alerta de novo (após cooldown)', async () => {
+  it('oscilação 100→90→100→90: alerta uma vez; a volta ao mesmo 90 é ruído; só um novo mínimo alerta', async () => {
     const { deps, t, script, advance, sent } = setup(priceTracker);
-    script.push(priceJson(100), priceJson(90), priceJson(100), priceJson(90));
+    script.push(priceJson(100), priceJson(90), priceJson(100), priceJson(90), priceJson(100), priceJson(85));
     await runCheck(deps, t.id); advance(60);
     expect((await runCheck(deps, t.id)).alerted).toBe(true); advance(60);
     expect((await runCheck(deps, t.id)).alerted).toBe(false); advance(120);
-    expect((await runCheck(deps, t.id)).alerted).toBe(true);
+    expect((await runCheck(deps, t.id)).alerted).toBe(false); advance(60); // volta a 90: já alertado nas últimas 24h
+    await runCheck(deps, t.id); advance(60);
+    expect((await runCheck(deps, t.id)).alerted).toBe(true); // 85 < 90: novo mínimo
     expect(sent).toHaveLength(2);
   });
 

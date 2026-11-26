@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { validateNewTracker, type NewTracker } from '../shared/types';
-import { overLimit } from './cost';
+import { overLimit, spentSince } from './cost';
 import type { Db } from './db';
 import type { CheckResultSummary } from './pipeline';
 import { computeStats } from './reports';
@@ -111,6 +111,8 @@ export function createApi(deps: ApiDeps): Server {
         hasApiKey: deps.hasApiKey(),
         lastCheckAt: lastCheck.at ?? undefined,
         overLimit: overLimit(db, deps.now()).over,
+        spentDayUsd: spentSince(db, new Date(deps.now().getFullYear(), deps.now().getMonth(), deps.now().getDate()).toISOString()),
+        spentMonthUsd: spentSince(db, new Date(deps.now().getFullYear(), deps.now().getMonth(), 1).toISOString()),
       });
     }
 

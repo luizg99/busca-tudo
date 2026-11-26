@@ -1,4 +1,6 @@
+import type { Usage } from './cost';
 import type { Db } from './db';
+import { reliableValue } from './decide';
 import type { LlmClient } from './llm';
 import type { Notifier } from './notifier';
 
@@ -10,6 +12,7 @@ export interface TrackerStats {
   max?: number;
   avg?: number;
   alerts: number;
+  costUsd: number;
   relevant: Array<{ at: string; title?: string; value?: number; sourceUrl?: string }>;
 }
 
@@ -20,8 +23,8 @@ export function computeStats(db: Db, trackerId: number, fromIso: string, toIso: 
   const values: number[] = [];
   for (const c of checks) {
     if (!c.ok) continue;
-    const vals = c.findings.filter((x) => x.found && typeof x.value === 'number').map((x) => x.value as number);
-    if (vals.length) values.push(Math.min(...vals));
+    const v = reliableValue(c.findings);
+    if (v !== undefined) values.push(v);
   }
   const alerts = db.listAlerts(trackerId, fromIso, toIso);
   return {
@@ -32,6 +35,7 @@ export function computeStats(db: Db, trackerId: number, fromIso: string, toIso: 
       ? { min: Math.min(...values), max: Math.max(...values), avg: values.reduce((a, b) => a + b, 0) / values.length }
       : {}),
     alerts: alerts.length,
+    costUsd: checks.reduce((sum, c) => sum + c.costUsd, 0),
     relevant: alerts.map((a) => ({ at: a.at, title: a.text.split('\n')[0], value: a.value, sourceUrl: a.sourceUrl })),
   };
 }
@@ -43,6 +47,7 @@ export interface DigestDeps {
   model: string;
   sendWhatsApp: boolean;
   now: () => Date;
+  onUsage?: (u: Usage) => void;
 }
 
 const PERIOD_HOURS: Record<DigestPeriod, number> = { daily: 24, weekly: 24 * 7 };
@@ -70,6 +75,7 @@ export async function generateDigest(deps: DigestDeps, period: DigestPeriod): Pr
       { role: 'user', content: `Resumo ${period === 'daily' ? 'diário' : 'semanal'}. Dados:\n${JSON.stringify(sections, null, 2)}` },
     ],
   });
+  deps.onUsage?.(reply.usage);
   const text = reply.text.trim();
   db.addReport({ period, text, at: to.toISOString() });
   if (sendWhatsApp) await notifier.sendInfo(text);

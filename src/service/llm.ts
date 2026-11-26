@@ -24,6 +24,11 @@ export interface LlmClient {
 
 const MAX_PAUSE_TURNS = 4;
 
+/** Une os blocos de texto sem separador: com citações a resposta vem partida no meio de frases/JSON. */
+export function joinTextBlocks(content: any[]): string {
+  return content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+}
+
 export function createAnthropicClient(apiKey: string): LlmClient {
   const client = new Anthropic({ apiKey });
 
@@ -45,7 +50,7 @@ export function createAnthropicClient(apiKey: string): LlmClient {
         inputTokens += res.usage?.input_tokens ?? 0;
         outputTokens += res.usage?.output_tokens ?? 0;
         searches += res.usage?.server_tool_use?.web_search_requests ?? 0;
-        text = (res.content as any[]).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+        text = joinTextBlocks(res.content as any[]);
         if (res.stop_reason !== 'pause_turn') break;
         messages.push({ role: 'assistant', content: res.content });
       }

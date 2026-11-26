@@ -59,6 +59,7 @@ async function refreshStatus() {
   setPill('st-service', 'serviço rodando', 'ok');
   setPill('st-whatsapp', s.whatsapp === 'ready' ? 'WhatsApp conectado' : s.whatsapp === 'qr' ? 'WhatsApp: escaneie o QR' : 'WhatsApp desconectado', s.whatsapp === 'ready' ? 'ok' : 'warn');
   setPill('st-key', s.hasApiKey ? 'chave configurada' : 'sem chave da Anthropic', s.hasApiKey ? 'ok' : 'bad');
+  setPill('st-spend', `hoje US$ ${(s.spentDayUsd ?? 0).toFixed(2)} · mês US$ ${(s.spentMonthUsd ?? 0).toFixed(2)}`, '');
   document.getElementById('st-limit').classList.toggle('hidden', !s.overLimit);
   showBanner(s.hasApiKey ? '' : 'Configure a chave da Anthropic em Configurações para começar.', false);
 }
@@ -71,7 +72,7 @@ async function viewTrackers() {
   for (const t of list) {
     const checks = await api('GET', `/trackers/${t.id}/checks?limit=1`).catch(() => []);
     const last = checks[0];
-    const best = last?.findings?.filter((f) => f.found && f.value != null).sort((a, b) => a.value - b.value)[0];
+    const best = last?.findings?.filter((f) => f.found && f.value != null && f.confidence >= 0.6 && (!f.currency || f.currency === 'BRL')).sort((a, b) => a.value - b.value)[0];
     const state = !last ? 'nunca verificado' : last.ok ? `última: ${when(last.at)}` : `falhou em ${when(last.at)}: ${last.error}`;
     const result = h('span', { class: 'muted' });
     const card = h('div', { class: 'card' },
@@ -110,7 +111,7 @@ async function viewDetail(t) {
     h('div', { class: 'row' }, h('button', { onclick: () => render() }, '← Voltar'), h('h1', { class: 'grow' }, t.name)),
     h('p', { class: 'muted' }, `${t.goal} · alerta ${COND(t.alertCondition)} · resumo ${{ none: 'desligado', daily: 'diário', weekly: 'semanal' }[t.digest]}`),
     h('h2', {}, 'Últimos 7 dias'),
-    h('div', { class: 'stats' }, stat('Verificações', stats.checks), stat('Falhas', stats.failures), stat('Menor', money(stats.min)), stat('Maior', money(stats.max)), stat('Média', money(stats.avg)), stat('Alertas', stats.alerts)),
+    h('div', { class: 'stats' }, stat('Verificações', stats.checks), stat('Falhas', stats.failures), stat('Menor', money(stats.min)), stat('Maior', money(stats.max)), stat('Média', money(stats.avg)), stat('Alertas', stats.alerts), stat('Custo', `US$ ${stats.costUsd.toFixed(4)}`)),
     h('h2', {}, 'Histórico'),
     ...checks.map((c) => h('div', { class: 'card' },
       h('div', { class: c.ok ? '' : 'bad' }, `${when(c.at)} · ${c.ok ? 'ok' : `falhou: ${c.error}`} · ${c.model} · US$ ${c.costUsd.toFixed(4)}`),
