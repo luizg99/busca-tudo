@@ -276,7 +276,7 @@ export function openDb(path: string) {
     },
     lastDiscoveryAt(trackerId: number): string | undefined {
       const r = raw
-        .prepare("SELECT at FROM checks WHERE tracker_id = ? AND mode = 'discovery' ORDER BY at DESC, id DESC LIMIT 1")
+        .prepare("SELECT at FROM checks WHERE tracker_id = ? AND mode IN ('discovery', 'fallback') ORDER BY at DESC, id DESC LIMIT 1")
         .get(trackerId) as any;
       return r?.at;
     },
@@ -284,9 +284,10 @@ export function openDb(path: string) {
       const existing = raw.prepare('SELECT * FROM sources WHERE tracker_id = ? AND url = ?').get(trackerId, s.url) as any;
       if (existing) {
         raw
-          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ? WHERE id = ?')
+          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ? WHERE id = ?')
           .run(s.label ?? existing.label, s.rule ? JSON.stringify(s.rule) : existing.rule_json, s.status,
-            s.lastValue ?? existing.last_value, s.status === 'ok' ? null : s.lastError ?? existing.last_error, existing.id);
+            s.lastValue ?? existing.last_value, s.status === 'ok' ? null : s.lastError ?? existing.last_error,
+            s.status === 'ok' ? 0 : existing.consecutive_failures, existing.id);
         return api.getSource(existing.id)!;
       }
       const info = raw

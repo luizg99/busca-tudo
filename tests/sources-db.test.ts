@@ -93,6 +93,24 @@ describe('fontes (sources)', () => {
     expect(db.lastDiscoveryAt(t.id)).toBe('2026-01-01T10:00:00Z');
   });
 
+  it('lastDiscoveryAt também considera a busca de fallback', () => {
+    const db = openDb(':memory:');
+    const t = db.createTracker(nt);
+    db.addCheck({ trackerId: t.id, at: '2026-01-01T10:00:00Z', ok: true, findings: [], model: 'm', costUsd: 0, mode: 'discovery' });
+    db.addCheck({ trackerId: t.id, at: '2026-01-01T12:00:00Z', ok: true, findings: [], model: 'm', costUsd: 0, mode: 'fallback' });
+    expect(db.lastDiscoveryAt(t.id)).toBe('2026-01-01T12:00:00Z');
+  });
+
+  it('upsertSource com status ok zera a contagem de falhas (a fonte voltou a ser lida)', () => {
+    const db = openDb(':memory:');
+    const t = db.createTracker(nt);
+    const s = db.upsertSource(t.id, { url: 'https://loja/a', status: 'ok' });
+    db.recordSourceResult(s.id, { ok: false, error: 'x', at: '2026-01-01T10:00:00Z' });
+    db.recordSourceResult(s.id, { ok: false, error: 'x', at: '2026-01-01T11:00:00Z' });
+    db.upsertSource(t.id, { url: 'https://loja/a', status: 'ok', lastValue: 10 });
+    expect(db.getSource(s.id)).toMatchObject({ status: 'ok', consecutiveFailures: 0 });
+  });
+
   it('apagar o acompanhamento apaga as fontes', () => {
     const db = openDb(':memory:');
     const t = db.createTracker(nt);

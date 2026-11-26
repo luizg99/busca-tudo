@@ -6,8 +6,9 @@ import type { LlmClient } from '../src/service/llm';
 import type { NewTracker } from '../src/shared/types';
 
 const models = { routine: 'claude-haiku-5-5', escalate: 'claude-sonnet-5-5' };
+// kind 'generic': estes testes cobrem o caminho de descoberta (busca completa a cada verificação), sem leitura de fontes
 const priceTracker: NewTracker = {
-  name: 'PS5', kind: 'price', goal: 'menor preço', include: [], exclude: [], intervalMinutes: 60,
+  name: 'PS5', kind: 'generic', goal: 'menor preço', include: [], exclude: [], intervalMinutes: 60,
   alertCondition: { type: 'below_last' }, digest: 'none',
 };
 const newsTracker: NewTracker = { ...priceTracker, name: 'Notícias', kind: 'news', alertCondition: { type: 'new_items' } };

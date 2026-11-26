@@ -145,9 +145,12 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
     const url = f.sourceUrl!;
     const value = f.value as number;
     const label = f.title;
+    // Uma fonte que já funcionava não é rebaixada por uma falha pontual: quem decide isso é a rotina (falhas seguidas).
+    const known = deps.db.listSources(tracker.id).find((s) => s.url === url);
+    const alreadyUsable = known !== undefined && known.status !== 'unreadable';
     const page = await deps.fetchPage(url);
     if (!page.ok) {
-      deps.db.upsertSource(tracker.id, { url, label, status: 'unreadable', lastError: page.message });
+      if (!alreadyUsable) deps.db.upsertSource(tracker.id, { url, label, status: 'unreadable', lastError: page.message });
       continue;
     }
     const close = (v: number | undefined) => v !== undefined && Math.abs(v - value) / value <= LEARN_TOLERANCE;
@@ -164,6 +167,7 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
       deps.db.upsertSource(tracker.id, { url, label, status: 'ok', lastValue: value });
       continue;
     }
+    if (alreadyUsable) continue;
     deps.db.upsertSource(tracker.id, {
       url, label, status: 'unreadable',
       lastError: 'O preço não aparece no HTML da página (provavelmente montado por JavaScript): só a busca completa consegue ver esse site.',
