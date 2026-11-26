@@ -56,6 +56,9 @@ function rel(ms) {
   return m < 1 ? txt : ms < 0 ? `há ${txt}` : `em ${txt}`;
 }
 const link = (url, label) => h('a', { class: 'link', title: url, onclick: () => bt.openExternal(url) }, label || url);
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
+const MODE = { discovery: 'Busca completa', routine: 'Leitura por código', fallback: 'Busca completa (fallback)' };
+const METHOD = { rule: 'regra', generic: 'dados estruturados', ai: 'IA (trecho)' };
 const KIND = { price: 'Preço', news: 'Notícias', generic: 'Geral' };
 const DIGEST = { none: 'desligado', daily: 'diário', weekly: 'semanal' };
 const COND = (c) => (c.type === 'below_last' ? 'preço abaixo do último valor' : c.type === 'below_value' ? `preço abaixo de ${money(c.value)}` : 'qualquer novidade');
@@ -215,6 +218,11 @@ function trackerCard(t, last, stats) {
       metric('Próxima consulta', nxt.text, nxt.sub),
       metric('Frequência', `${t.intervalMinutes} min`, `alerta: ${COND(t.alertCondition)}`)),
     last && !last.ok ? h('div', { class: 'alert' }, icon('alert'), h('span', {}, `Última verificação falhou: ${last.error}`)) : null,
+    stats?.sourceProblems?.length
+      ? h('div', { class: 'alert warn' }, icon('alert'), h('div', {}, h('strong', {}, `Sem preço em ${stats.sourceProblems.length} site(s) (nem pelo código nem pela IA):`),
+          stats.sourceProblems.map((p) => h('div', {}, `${p.label || hostOf(p.url)} — ${p.error || 'motivo desconhecido'}`)),
+          h('div', { class: 'small' }, 'Esses sites só entram pela busca completa na web, 1 vez por dia.')))
+      : null,
     h('div', { class: 'tracker-foot' }, checkBtn,
       btn(t.status === 'active' ? 'Pausar' : 'Retomar', { sm: true, onclick: async () => { await api('PATCH', `/trackers/${t.id}`, { status: t.status === 'active' ? 'paused' : 'active' }); await render(); } }, t.status === 'active' ? 'pause' : 'play'),
       btn('Editar', { sm: true, onclick: () => { editingId = t.id; render(); } }, 'sliders'),
@@ -242,11 +250,22 @@ async function viewTrackers() {
 
 async function viewDetail(t) {
   stopPoll();
-  const [stats, checks] = await Promise.all([api('GET', `/trackers/${t.id}/stats`), api('GET', `/trackers/${t.id}/checks?limit=50`)]);
+  const [stats, checks, sources] = await Promise.all([api('GET', `/trackers/${t.id}/stats`), api('GET', `/trackers/${t.id}/checks?limit=50`), api('GET', `/trackers/${t.id}/sources`).catch(() => [])]);
+  const sourceCards = sources.map((s) => h('div', { class: 'card' },
+    h('div', { class: 'hist-head' }, h('strong', {}, s.label || hostOf(s.url)),
+      s.status === 'ok' ? badge('lendo o preço', 'ok') : s.status === 'failing' ? badge(`falhando (${s.consecutiveFailures}x)`, 'bad') : badge('só pela busca completa', 'warn'),
+      s.rule ? badge(s.rule.type === 'generic' ? 'dados estruturados' : 'regra aprendida', 'accent') : s.status === 'ok' ? badge('IA lê o trecho', 'accent') : null,
+      s.lastValue != null ? h('span', { class: 'muted small' }, `último: ${money(s.lastValue)}`) : null),
+    h('div', { class: 'small' }, link(s.url)),
+    s.lastError ? h('div', { class: s.status === 'ok' ? 'muted small' : 'alert', style: 'margin-top:8px' }, s.status === 'ok' ? null : icon('alert'), h('span', {}, s.lastError)) : null));
   const hist = checks.map((c) => h('div', { class: 'card' },
-    h('div', { class: 'hist-head' }, h('strong', {}, when(c.at)), c.ok ? badge('ok', 'ok') : badge('falhou', 'bad'),
+    h('div', { class: 'hist-head' }, h('strong', {}, when(c.at)), c.ok ? badge('ok', 'ok') : badge('falhou', 'bad'), c.mode ? badge(MODE[c.mode] || c.mode, c.mode === 'routine' ? 'ok' : 'accent') : null,
       h('span', { class: 'muted small' }, `${c.model} · US$ ${c.costUsd.toFixed(4)}`)),
     c.ok ? null : h('div', { class: 'alert', style: 'margin-top:8px' }, icon('alert'), h('span', {}, c.error)),
+    (c.sources || []).map((r) => h('div', { class: 'finding' },
+      h('span', { class: 'val' }, r.ok ? money(r.value) : 'sem preço'),
+      h('div', { class: 'info' }, h('div', {}, r.label || hostOf(r.url)), h('div', { class: r.ok ? 'muted' : 'bad' }, r.ok ? `lido por ${METHOD[r.method] || r.method}` : r.error)),
+      badge(r.ok ? 'fonte' : 'falhou', r.ok ? 'ok' : 'bad'))),
     c.findings.map((f) => h('div', { class: 'finding' },
       h('span', { class: 'val' }, f.found ? (f.value != null ? money(f.value, f.currency) : '—') : 'nada'),
       h('div', { class: 'info' }, h('div', {}, f.found ? (f.title || f.evidence || '') : f.evidence), f.sourceUrl ? h('div', {}, link(f.sourceUrl)) : null),
@@ -256,6 +275,8 @@ async function viewDetail(t) {
       h('div', { class: 'grow' }, h('h1', {}, t.name), h('div', { class: 'sub' }, `${t.goal} · alerta: ${COND(t.alertCondition)} · resumo ${DIGEST[t.digest]}`))),
     h('h2', { class: 'section' }, 'Últimos 7 dias'),
     h('div', { class: 'stats' }, metric('Verificações', String(stats.checks), `${stats.failures} falha(s)`), metric('Menor', money(stats.min)), metric('Maior', money(stats.max)), metric('Média', money(stats.avg)), metric('Alertas', String(stats.alerts)), metric('Custo', `US$ ${stats.costUsd.toFixed(4)}`)),
+    h('h2', { class: 'section' }, 'Fontes de preço'),
+    h('div', { class: 'history' }, sourceCards.length ? sourceCards : h('p', { class: 'muted' }, 'Ainda não há fontes: elas são descobertas na primeira busca completa.')),
     h('h2', { class: 'section' }, 'Histórico de verificações'),
     h('div', { class: 'history' }, hist.length ? hist : h('p', { class: 'muted' }, 'Ainda não houve verificações.'))));
 }

@@ -93,6 +93,20 @@ describe('api', () => {
     expect((await call('PATCH', '/trackers/9999', { intervalMinutes: 60 })).status).toBe(404);
   });
 
+  it('GET /trackers/:id/sources lista as fontes do acompanhamento com estado e motivo; /stats traz os sites sem preço', async () => {
+    const { call, db } = await start();
+    const id = (await call('POST', '/trackers', goodInput)).json.id;
+    db.upsertSource(id, { url: 'https://l/a', label: 'Loja A', status: 'ok', lastValue: 3500, rule: { type: 'generic' } });
+    db.upsertSource(id, { url: 'https://l/js', label: 'Loja JS', status: 'unreadable', lastError: 'montado por JavaScript' });
+    const r = await call('GET', `/trackers/${id}/sources`);
+    expect(r.status).toBe(200);
+    expect(r.json.map((s: any) => [s.label, s.status])).toEqual([['Loja A', 'ok'], ['Loja JS', 'unreadable']]);
+    const stats = await call('GET', `/trackers/${id}/stats`);
+    expect(stats.json.sourcesOk).toBe(1);
+    expect(stats.json.sourceProblems[0]).toMatchObject({ label: 'Loja JS', status: 'unreadable', error: 'montado por JavaScript' });
+    expect((await call('GET', '/trackers/9999/sources')).json).toEqual([]);
+  });
+
   it('confirm sem proposta pendente devolve 409', async () => {
     const { call } = await start();
     expect((await call('POST', '/setup/s1/confirm')).status).toBe(409);

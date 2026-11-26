@@ -195,6 +195,10 @@ export function createApi(deps: ApiDeps): Server {
       return send(res, 200, db.listChecks(Number(m[1]), Number(url.searchParams.get('limit') ?? 100)));
     }
 
+    if (method === 'GET' && (m = path.match(/^\/trackers\/(\d+)\/sources$/))) {
+      return send(res, 200, db.listSources(Number(m[1])));
+    }
+
     if (method === 'GET' && (m = path.match(/^\/trackers\/(\d+)\/stats$/))) {
       const to = url.searchParams.get('to') ?? deps.now().toISOString();
       const from = url.searchParams.get('from') ?? new Date(Date.parse(to) - 7 * 24 * 3600_000).toISOString();
