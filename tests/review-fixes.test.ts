@@ -4,7 +4,7 @@ import { openDb } from '../src/service/db';
 import { joinTextBlocks, type LlmClient } from '../src/service/llm';
 import { runSmartCheck, CheckError } from '../src/service/checker';
 import { runCheck } from '../src/service/pipeline';
-import { Notifier, nextBackoffMs, type Transport } from '../src/service/notifier';
+import { Notifier, nextBackoffMs, selfJid, reconnectDelayMs, type Transport } from '../src/service/notifier';
 import { spentSince } from '../src/service/cost';
 import { SetupSession } from '../src/service/setupChat';
 import { computeStats, generateDigest } from '../src/service/reports';
@@ -213,5 +213,22 @@ describe('I4: custo por acompanhamento nas estatísticas', () => {
     db.addCheck({ trackerId: t.id, at: '2026-01-01T10:00:00Z', ok: true, findings: [f(95)], model: 'm', costUsd: 0.03 });
     db.addCheck({ trackerId: t.id, at: '2026-01-01T11:00:00Z', ok: false, error: 'x', findings: [], model: 'm', costUsd: 0.02 });
     expect(computeStats(db, t.id, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z').costUsd).toBeCloseTo(0.05, 6);
+  });
+});
+
+describe('transporte Baileys: helpers puros', () => {
+  it('selfJid tira o sufixo de dispositivo e monta o JID do próprio número', () => {
+    expect(selfJid('5511999990000:12@s.whatsapp.net')).toBe('5511999990000@s.whatsapp.net');
+    expect(selfJid('5511999990000@s.whatsapp.net')).toBe('5511999990000@s.whatsapp.net');
+  });
+  it('selfJid recusa id vazio ou sem número', () => {
+    expect(() => selfJid('')).toThrow();
+    expect(() => selfJid(undefined)).toThrow();
+  });
+  it('reconectar: 1ª queda reconecta logo (2s, como o 515 pós-QR); depois espera crescente com teto', () => {
+    expect(reconnectDelayMs(0)).toBe(2_000);
+    expect(reconnectDelayMs(1)).toBe(30_000);
+    expect(reconnectDelayMs(2)).toBe(60_000);
+    expect(reconnectDelayMs(20)).toBe(600_000);
   });
 });

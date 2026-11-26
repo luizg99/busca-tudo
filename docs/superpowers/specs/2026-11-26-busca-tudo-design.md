@@ -46,10 +46,10 @@ Ferramenta **pessoal** (um único usuário, sem login, sem controle de acesso) p
 ### Arquitetura e stack (escolha minha)
 Dois processos que compartilham o mesmo banco local:
 
-- **Serviço (worker):** Node/TypeScript, sem interface. Faz o agendamento, as verificações, o WhatsApp (`whatsapp-web.js`) e gera os relatórios. É o único que escreve nos acompanhamentos e no histórico.
+- **Serviço (worker):** Node/TypeScript, sem interface. Faz o agendamento, as verificações, o WhatsApp (Baileys) e gera os relatórios. É o único que escreve nos acompanhamentos e no histórico.
 - **App Electron:** só interface. Conversa com o serviço por uma API local (HTTP em `127.0.0.1`, porta fixa, com token aleatório guardado em arquivo do usuário). Se o serviço estiver parado, o app mostra o aviso e oferece iniciar.
 - Dados: SQLite (`better-sqlite3`) em pasta do usuário (`%APPDATA%`). Cliente `@anthropic-ai/sdk`.
-- **Inicialização com o Windows:** o serviço é registrado para iniciar no logon do usuário (tarefa agendada do Windows, sem janela). Escolhi logon e não "serviço do Windows" porque o WhatsApp Web precisa de navegador headless e da sessão do usuário. Consequência: roda depois de você entrar no Windows, não antes.
+- **Inicialização com o Windows:** o serviço é registrado para iniciar no logon do usuário (tarefa agendada do Windows, sem janela). Escolhi logon e não "serviço do Windows" por simplicidade (a tarefa roda na sessão do usuário, sem permissão de administrador); com o Baileys, que não usa navegador, um serviço do Windows de verdade passa a ser possível no futuro. Consequência: roda depois de você entrar no Windows, não antes.
 - O app instalado cuida do registro/remoção dessa tarefa (opção "iniciar com o Windows" nas configurações, ligada por padrão).
 - A chave da Anthropic fica guardada para o serviço conseguir ler (criptografia DPAPI do Windows, ligada ao seu usuário).
 

@@ -14,9 +14,8 @@ Requer Node 20+ no PATH.
 
 ```bash
 npm install
-# O npm 11 não roda scripts de instalação sozinho; rode estes dois uma vez:
+# O npm 11 não roda scripts de instalação sozinho; rode este uma vez:
 node node_modules/electron/install.js
-node node_modules/puppeteer/install.mjs      # Chromium usado pelo WhatsApp Web
 npm run build
 ```
 
@@ -28,7 +27,7 @@ npm run service    # (opcional) roda só o serviço
 npm test           # testes
 ```
 
-1. Em **Configurações**, informe a chave da Anthropic e escaneie o QR do WhatsApp.
+1. Em **Configurações**, informe a chave da Anthropic e escaneie o QR do WhatsApp (conexão via Baileys, sem navegador; a sessão fica em `%APPDATA%usca-tudo\wa-auth`).
 2. Em **Novo acompanhamento**, descreva o que quer acompanhar e responda às perguntas.
 3. Marque **Iniciar o serviço junto com o Windows** para o serviço subir a cada logon.
 

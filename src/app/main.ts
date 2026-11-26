@@ -93,6 +93,7 @@ function createWindow(): void {
     width: 1080,
     height: 720,
     title: 'busca-tudo',
+    icon: join(__dirname, '..', '..', 'assets', 'icon.ico'),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
