@@ -24,22 +24,25 @@ const REGEX_TIMEOUT_MS = 150;
 /** Um único ambiente isolado reaproveitado em todas as chamadas (criar um por chamada é lento). */
 const sandbox = vm.createContext({ re: undefined as unknown, text: '' });
 
-/** Repetição com limite maior que isso conta como "sem limite" (um grupo repetido 50 vezes explode igual). */
+/** Repetição de um GRUPO com limite maior que isso conta como "ampla": um grupo repetido 50 vezes explode igual a um sem limite. */
 const SMALL_REPEAT_MAX = 3;
 
-/** Quantificador que começa em `i`: `unbounded` para *, +, {n,} e limites grandes; limitado para ? e {n}/{n,m} pequenos. */
-function quantifierAt(p: string, i: number): { unbounded: boolean; length: number } {
+/**
+ * Quantificador que começa em `i`. `unbounded`: *, + e {n,} (realmente sem limite). `wide`: sem limite ou com limite
+ * grande (>3). Dentro de um grupo só importa o `unbounded`; o `wide` conta quando é o grupo que se repete.
+ */
+function quantifierAt(p: string, i: number): { unbounded: boolean; wide: boolean; length: number } {
   const c = p[i];
-  if (c === '*' || c === '+') return { unbounded: true, length: p[i + 1] === '?' ? 2 : 1 };
-  if (c === '?') return { unbounded: false, length: p[i + 1] === '?' ? 2 : 1 };
+  if (c === '*' || c === '+') return { unbounded: true, wide: true, length: p[i + 1] === '?' ? 2 : 1 };
+  if (c === '?') return { unbounded: false, wide: false, length: p[i + 1] === '?' ? 2 : 1 };
   if (c === '{') {
     const m = /^\{(\d+)(,(\d*))?\}/.exec(p.slice(i, i + 16));
     if (m) {
       const max = m[2] === undefined ? Number(m[1]) : m[3] === '' ? Infinity : Number(m[3]);
-      return { unbounded: max > SMALL_REPEAT_MAX, length: m[0].length + (p[i + m[0].length] === '?' ? 1 : 0) };
+      return { unbounded: max === Infinity, wide: max > SMALL_REPEAT_MAX, length: m[0].length + (p[i + m[0].length] === '?' ? 1 : 0) };
     }
   }
-  return { unbounded: false, length: 0 };
+  return { unbounded: false, wide: false, length: 0 };
 }
 
 /**
@@ -78,7 +81,7 @@ export function isRiskyPattern(pattern: string): boolean {
       const q = quantifierAt(pattern, i);
       i += q.length;
       if (g) {
-        if (q.unbounded && (g.unbounded || g.alt)) return true;
+        if (q.wide && (g.unbounded || g.alt)) return true; // grupo com repetição sem limite (ou alternância) repetido muitas vezes
         const parent = stack[stack.length - 1];
         if (parent) {
           parent.unbounded = parent.unbounded || g.unbounded || q.unbounded;

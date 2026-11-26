@@ -31,6 +31,8 @@ export const DISCOVERY_EVERY_HOURS = 24;
 export const FALLBACK_MIN_HOURS = 6;
 /** Depois de uma busca completa que falhou, espera esse intervalo antes de tentar outra (evita repetir busca cara a cada verificação). */
 export const RETRY_AFTER_FAILED_SEARCH_HOURS = 1;
+/** Depois de uma busca que falhou, o botão "Verificar agora" espera esse tempo (evita pagar várias buscas por cliques repetidos). */
+export const MANUAL_RETRY_MINUTES = 2;
 /** Quantas falhas seguidas de um site antes de avisar no WhatsApp. */
 export const WARN_AFTER_FAILURES = 2;
 /** Intervalo mínimo entre dois avisos sobre o mesmo site. */
@@ -106,14 +108,18 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
   const hoursSince = (iso: string) => (now().getTime() - Date.parse(iso)) / 3600_000;
   // busca completa que falhou há pouco: não tenta de novo ainda (só preços; os demais tipos seguem o intervalo do usuário)
   const attempt = tracker.kind === 'price' ? db.lastDiscoveryAttempt(trackerId) : undefined;
-  const searchCoolingDown = !opts.manual && !!attempt && !attempt.ok && hoursSince(attempt.at) < RETRY_AFTER_FAILED_SEARCH_HOURS;
+  // agendada: espera 1 h depois de uma busca que falhou; manual (ação do usuário): só uma espera curta contra cliques repetidos
+  const cooldownHours = opts.manual ? MANUAL_RETRY_MINUTES / 60 : RETRY_AFTER_FAILED_SEARCH_HOURS;
+  const searchCoolingDown = !!attempt && !attempt.ok && hoursSince(attempt.at) < cooldownHours;
   const recordFailure = async (error: string): Promise<CheckResultSummary> => {
     const costUsd = usages.reduce((sum, u) => sum + estimateCostUsd(u), 0);
     db.addCheck({ trackerId, at, ok: false, error, findings: [], model: usages.at(-1)?.model ?? 'leitura por código', costUsd, mode: 'routine', sources: sourceResults });
     await warnProblemSources(deps, tracker);
     return { ok: false, alerted: false, baseline: false, error };
   };
-  const COOLING_MESSAGE = `A busca completa falhou há pouco; nova tentativa em até ${RETRY_AFTER_FAILED_SEARCH_HOURS} hora.`;
+  const COOLING_MESSAGE = opts.manual
+    ? `A busca completa falhou há pouco; aguarde ${MANUAL_RETRY_MINUTES} minutos para tentar de novo.`
+    : `A busca completa falhou há pouco; nova tentativa em até ${RETRY_AFTER_FAILED_SEARCH_HOURS} hora.`;
 
   // Preços: depois da descoberta, a rotina lê as fontes conhecidas (plano A = código, plano B = IA com trecho).
   if (tracker.kind === 'price') {

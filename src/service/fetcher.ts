@@ -62,6 +62,7 @@ export function isPrivateHost(hostRaw: string): boolean {
     const v4 = (x: number, y: number) => isReservedIpv4(x >> 8, x & 255, y >> 8);
     if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return v4(g[6], g[7]); // ::ffff:a.b.c.d
     if (g[0] === 0x2002) return v4(g[1], g[2]); // 6to4
+    if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return v4(g[6], g[7]); // NAT64 (DNS64): 64:ff9b::/96
     if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true; // Teredo e documentação
     return !(g[0] >= 0x2000 && g[0] <= 0x3fff); // fora de 2000::/3 (inclui ::1, fc00::, fe80::, ff00::, 64:ff9b::, ::a.b.c.d)
   }
@@ -111,7 +112,8 @@ function readBody(stream: Readable, source: http.IncomingMessage, maxBytes: numb
       if (bytes >= maxBytes) { source.destroy(); stream.destroy(); finish(); }
     });
     stream.on('end', finish);
-    stream.on('close', finish);
+    // fechar sem ter chegado ao fim é conexão interrompida, não página completa
+    stream.on('close', () => (finished ? undefined : reject(new Error('A conexão foi interrompida antes do fim da página.'))));
     stream.on('error', (e) => (finished ? undefined : reject(e)));
     source.on('error', (e) => (finished ? undefined : reject(e)));
   });
@@ -137,8 +139,10 @@ export async function fetchPage(url: string, opts: FetchOptions = {}): Promise<F
       (addrs) => {
         // o callback roda exatamente uma vez, mesmo se algo aqui dentro lançar
         if (addrs.length === 0) return cb(Object.assign(new Error(`Não foi possível resolver ${hostname}`), { code: 'ENOTFOUND' }));
+        // um nome liberado só isenta endereços de loopback (uso nos testes locais), nunca redes privadas ou metadados de nuvem
         const hostAllowed = allowedHosts.has(hostname.toLowerCase());
-        if (!hostAllowed && addrs.some((a) => isPrivateHost(a.address) && !exemptResolved.has(a.address.toLowerCase()))) {
+        const isLoopback = (addr: string) => /^127\./.test(addr) || addr === '::1';
+        if (addrs.some((a) => isPrivateHost(a.address) && !exemptResolved.has(a.address.toLowerCase()) && !(hostAllowed && isLoopback(a.address)))) {
           return cb(Object.assign(new Error('Endereço interno'), { code: 'EINTERNAL' }));
         }
         return options?.all ? cb(null, addrs) : cb(null, addrs[0].address, addrs[0].family);
@@ -192,6 +196,7 @@ export async function fetchPage(url: string, opts: FetchOptions = {}): Promise<F
         : encoding.includes('br') ? res.pipe(zlib.createBrotliDecompress())
         : res;
       const body = await readBody(stream, res, maxBytes);
+      if (controller.signal.aborted) return { ok: false, kind: 'timeout', message: `O site demorou mais de ${Math.round(timeoutMs / 1000)} s para responder.` };
       return { ok: true, html: decodeBody(body, res.headers['content-type']) };
     }
     return { ok: false, kind: 'http', message: 'O site fez redirecionamentos demais.' };
