@@ -65,6 +65,18 @@ describe('runCheck', () => {
     expect(sent).toHaveLength(2);
   });
 
+  it('penúltima R$ 4.000, última R$ 3.956,55: avisa no WhatsApp o menor achado e que é menor que a última consulta', async () => {
+    const { deps, t, script, advance, sent } = setup(priceTracker);
+    script.push(priceJson(4000), priceJson(3956.55));
+    await runCheck(deps, t.id); advance(60);
+    const r = await runCheck(deps, t.id);
+    expect(r.alerted).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('menor que na última consulta');
+    expect(sent[0]).toContain('Menor achado: R$ 3.956,55');
+    expect(sent[0]).toContain('Última consulta: R$ 4.000,00');
+  });
+
   it('mesmo valor de novo não alerta', async () => {
     const { deps, t, script, advance } = setup(priceTracker);
     script.push(priceJson(100), priceJson(100));

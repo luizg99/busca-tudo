@@ -31,6 +31,23 @@ describe('decideAlert (preço)', () => {
     expect(a.value).toBe(90);
     expect(a.sourceUrl).toBe('https://loja/a');
   });
+  it('mensagem diz o menor achado, que é menor que a última consulta, e quanto caiu', () => {
+    const f = { ...price(3956.55), title: 'PS5 Slim Digital na Amazon' };
+    const a = decideAlert(tracker(), [f], ctx({ lastValue: 4000 })).alert!;
+    expect(a.text).toContain('menor que na última consulta');
+    expect(a.text).toContain('Menor achado: R$ 3.956,55');
+    expect(a.text).toContain('PS5 Slim Digital na Amazon');
+    expect(a.text).toContain('Última consulta: R$ 4.000,00');
+    expect(a.text).toContain('R$ 43,45');
+    expect(a.text).toContain('1,1%');
+    expect(a.text).toContain('https://loja/a');
+  });
+  it('below_value: a mensagem informa o limite e o menor achado', () => {
+    const t = tracker({ alertCondition: { type: 'below_value', value: 3500 } });
+    const a = decideAlert(t, [price(3400)], ctx()).alert!;
+    expect(a.text).toContain('abaixo de R$ 3.500,00');
+    expect(a.text).toContain('Menor achado: R$ 3.400,00');
+  });
   it('below_value: alerta abaixo do limite, não acima', () => {
     const t = tracker({ alertCondition: { type: 'below_value', value: 50 } });
     expect(decideAlert(t, [price(49)], ctx()).alert).toBeDefined();

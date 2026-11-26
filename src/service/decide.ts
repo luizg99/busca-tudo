@@ -123,7 +123,17 @@ export function decideAlert(t: Tracker, findings: Finding[], ctx: DecisionContex
   }
   if (!hit || withinCooldown(ctx, best.sourceUrl) || repeatsLastAlert(ctx, value)) return { baseline: false, ignored };
 
-  const before = ctx.lastValue !== undefined ? ` (antes ${brl(ctx.lastValue, best.currency)})` : '';
-  const text = `📉 ${t.name}: ${brl(value, best.currency)}${before}${best.sourceUrl ? `\n${best.sourceUrl}` : ''}`;
+  const header =
+    t.alertCondition.type === 'below_value'
+      ? `📉 ${t.name}: o preço ficou abaixo de ${brl(t.alertCondition.value)}!`
+      : `📉 ${t.name}: achei um preço menor que na última consulta!`;
+  const lines = [header, `Menor achado: ${brl(value, best.currency)}${best.title ? ` (${best.title})` : ''}`];
+  if (ctx.lastValue !== undefined && value < ctx.lastValue) {
+    const diff = ctx.lastValue - value;
+    const pct = ((diff / ctx.lastValue) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    lines.push(`Última consulta: ${brl(ctx.lastValue, best.currency)} (queda de ${brl(diff, best.currency)} · ${pct}%)`);
+  }
+  if (best.sourceUrl) lines.push(best.sourceUrl);
+  const text = lines.join('\n');
   return { baseline: false, ignored, alert: { text, sourceUrl: best.sourceUrl, value } };
 }
