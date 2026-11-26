@@ -48,6 +48,8 @@ export interface Finding {
   payment?: 'vista' | 'parcelado';
   /** Detalhe do pagamento, ex.: "Pix" ou "10x sem juros no cartão". */
   paymentNote?: string;
+  /** Preenchido pelo app: endereço completo da página (ex.: blog de cupom) onde a oferta foi achada, quando o preço é lido na loja. */
+  viaUrl?: string;
   /** Preenchido pelo app: domínio do site desconhecido por onde uma loja confiável foi encontrada. */
   via?: string;
   /** Preenchido pelo app: motivo de a oferta ter sido ignorada (loja desconhecida). */

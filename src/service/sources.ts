@@ -6,8 +6,10 @@ import { isReliablePrice, parsePrice } from './decide';
 import type { FetchResult } from './fetcher';
 import { extractGenericPrice, htmlToText, snippetsAround } from './html';
 import type { LlmClient } from './llm';
+import { induceRule, teachRule } from './teach';
 
-export const MAX_SOURCES_PER_TRACKER = 4;
+/** Trava de segurança contra resposta anormal da busca (o usuário quer guardar todas as lojas achadas). */
+export const MAX_SOURCES_PER_TRACKER = 30;
 /** Variação máxima aceita em relação ao último valor confiável; acima disso a leitura é tratada como suspeita. */
 export const MAX_VARIATION = 0.4;
 const MAX_PATTERN_LENGTH = 400;
@@ -256,6 +258,15 @@ function valueInText(text: string, value: number): boolean {
 export interface LearnDeps {
   db: Db;
   fetchPage(url: string): Promise<FetchResult>;
+  /** IA para ensinar a regra quando o código não consegue montá-la sozinho (opcional). */
+  llm?: LlmClient;
+  model?: string;
+}
+
+export interface LearnResult {
+  /** Endereços que a busca trouxe (lidos ou não): a lista de fontes do dia. */
+  urls: string[];
+  usages: Usage[];
 }
 
 /**
@@ -263,7 +274,8 @@ export interface LearnDeps {
  * estruturados) reproduz o preço visto pela IA, ou se o preço ao menos está no texto (o plano B consegue ler).
  * Páginas onde nada disso ocorre ficam como "unreadable" com o motivo, para o relatório explicar.
  */
-export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: Finding[]): Promise<void> {
+export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: Finding[]): Promise<LearnResult> {
+  const usages: Usage[] = [];
   const seen = new Set<string>();
   const candidates = findings
     .filter((f) => isReliablePrice(f) && f.sourceUrl && /^https?:\/\//i.test(f.sourceUrl))
@@ -275,7 +287,7 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
     const value = f.value as number;
     const label = f.title;
     // loja, link da loja e cupom ficam com a fonte: a rotina por código os mostra nos alertas seguintes (null apaga o antigo)
-    const origin = f.via || f.store || f.coupon || f.storeUrl || f.payment ? { store: f.store, storeUrl: f.storeUrl, coupon: f.coupon, via: f.via, payment: f.payment, paymentNote: f.paymentNote } : null;
+    const origin = f.via || f.viaUrl || f.store || f.coupon || f.storeUrl || f.payment ? { store: f.store, storeUrl: f.storeUrl, coupon: f.coupon, via: f.via, viaUrl: f.viaUrl, payment: f.payment, paymentNote: f.paymentNote } : null;
     // Uma fonte que já funcionava não é rebaixada por uma falha pontual: quem decide isso é a rotina (falhas seguidas).
     const known = deps.db.listSources(tracker.id).find((s) => s.url === url);
     const alreadyUsable = known !== undefined && known.status !== 'unreadable';
@@ -303,7 +315,14 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
       continue;
     }
     if (valueInText(htmlToText(page.html), value)) {
-      deps.db.upsertSource(tracker.id, { url, label, status: 'ok', lastValue: value, trustedVia: !!f.via, origin });
+      // ensina a leitura uma vez (código primeiro; IA só se precisar), para a rotina de 15 em 15 min não usar IA
+      let taught = induceRule(page.html, value);
+      if (!taught && deps.llm && deps.model) {
+        const t = await teachRule(deps.llm, deps.model, page.html, value);
+        usages.push(...t.usages);
+        taught = t.rule;
+      }
+      deps.db.upsertSource(tracker.id, { url, label, ...(taught ? { rule: taught } : {}), status: 'ok', lastValue: value, trustedVia: !!f.via, origin });
       continue;
     }
     if (alreadyUsable) continue;
@@ -312,4 +331,5 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
       lastError: 'O preço não aparece no HTML da página (provavelmente montado por JavaScript): só a busca completa consegue ver esse site.',
     });
   }
+  return { urls: candidates.map((f) => f.sourceUrl!), usages };
 }

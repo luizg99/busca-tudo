@@ -18,7 +18,7 @@ export interface CheckRow extends Omit<CheckInput, 'sources'> {
   sources: SourceResult[];
 }
 /** De onde a oferta veio (site desconhecido que leva a uma loja confiável), para mostrar loja e cupom nas leituras seguintes. */
-export interface SourceOrigin { store?: string; storeUrl?: string; coupon?: string; via?: string; payment?: 'vista' | 'parcelado'; paymentNote?: string }
+export interface SourceOrigin { store?: string; storeUrl?: string; coupon?: string; via?: string; viaUrl?: string; payment?: 'vista' | 'parcelado'; paymentNote?: string }
 
 export interface SourceRow {
   id: number;
@@ -349,6 +349,11 @@ export function openDb(path: string) {
       }
     },
     /** Apaga as fontes aprendidas (ex.: quando o acompanhamento muda de produto). */
+    /** A busca do dia manda: fica só o que ela trouxe (as que continuam mantêm a regra aprendida). */
+    keepOnlySources(trackerId: number, urls: string[]): void {
+      const keep = new Set(urls);
+      for (const s of api.listSources(trackerId)) if (!keep.has(s.url)) raw.prepare('DELETE FROM sources WHERE id = ?').run(s.id);
+    },
     deleteSources(trackerId: number): void {
       raw.prepare('DELETE FROM sources WHERE tracker_id = ?').run(trackerId);
     },

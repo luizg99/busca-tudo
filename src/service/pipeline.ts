@@ -2,7 +2,7 @@ import type { CheckMode, Finding, SourceResult, Tracker } from '../shared/types'
 import { CheckError, runSmartCheck } from './checker';
 import { estimateCostUsd, type Usage } from './cost';
 import type { Db, SourceRow } from './db';
-import { decideAlert } from './decide';
+import { decideAlert, isReliablePrice } from './decide';
 import { fetchPage as defaultFetchPage, resolveFinalUrl as defaultResolveFinalUrl, type FetchResult } from './fetcher';
 import type { LlmClient } from './llm';
 import type { Notifier } from './notifier';
@@ -14,7 +14,7 @@ import { classifyFinding, extractLinks, getTrustedSites, isTrustedUrl, type Page
 const TRUST_RESOLVE_TIMEOUT_MS = 6000;
 
 /** Ofertas conferidas (com seguimento de link) por busca completa. */
-const MAX_TRUST_CHECKS = 8;
+const MAX_TRUST_CHECKS = 30; // trava de segurança contra resposta anormal; na prática a busca traz bem menos
 
 /**
  * Aplica a lista de lojas confiáveis às ofertas da busca: ofertas de loja desconhecida ficam marcadas como ignoradas
@@ -182,6 +182,14 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
     const lastDiscovery = db.lastDiscoveryAt(trackerId);
     const discoveryDue = (!lastDiscovery || hoursSince(lastDiscovery) >= DISCOVERY_EVERY_HOURS) && !searchCoolingDown;
     let anySuspect = false;
+    // a última busca completa não achou nenhuma loja: não repete a cada verificação, só depois de FALLBACK_MIN_HOURS
+    if (known.length === 0 && !opts.manual && lastDiscovery && hoursSince(lastDiscovery) < FALLBACK_MIN_HOURS) {
+      const lastSearch = db.listChecks(trackerId, 200).find((c) => c.ok && (c.mode === 'discovery' || c.mode === 'fallback'));
+      if (lastSearch && !lastSearch.findings.some(isReliablePrice)) {
+        db.addCheck({ trackerId, at, ok: true, findings: [], model: 'leitura por código', costUsd: 0, mode: 'routine', sources: [] });
+        return { ok: true, alerted: false, baseline: false };
+      }
+    }
     if (readable.length === 0 && known.length > 0 && !discoveryDue) {
       // só há fontes que o código não lê: só a busca completa diária as vê, então isto não é falha nem gera custo
       db.addCheck({ trackerId, at, ok: true, findings: [], model: 'leitura por código', costUsd: 0, mode: 'routine', sources: snapshot(known) });
@@ -204,7 +212,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
         if (result.ok && result.value !== undefined) {
           findings.push({
             found: true, value: result.value, currency: 'BRL', title: s.label, sourceUrl: s.url,
-            ...(s.origin ? { via: s.origin.via, store: s.origin.store, storeUrl: s.origin.storeUrl, coupon: s.origin.coupon, payment: s.origin.payment, paymentNote: s.origin.paymentNote } : {}),
+            ...(s.origin ? { via: s.origin.via, viaUrl: s.origin.viaUrl, store: s.origin.store, storeUrl: s.origin.storeUrl, coupon: s.origin.coupon, payment: s.origin.payment, paymentNote: s.origin.paymentNote } : {}),
             evidence: `Lido da página por ${result.method === 'ai' ? 'IA (trecho)' : 'código'}.`, confidence: result.method === 'ai' ? 0.75 : 0.95,
           });
         }
@@ -266,7 +274,12 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
     }
     if (tracker.kind === 'price') {
       // aprender fontes é um extra: um erro aqui não pode perder o check nem o custo da busca (e causar nova busca em seguida)
-      try { await learnSources({ db, fetchPage }, tracker, findings); } catch { /* segue sem aprender desta vez */ }
+      try {
+        const learned = await learnSources({ db, fetchPage, llm, model: models.routine }, tracker, findings);
+        usages.push(...learned.usages);
+        // a lista de sites segue a busca do dia; se ela não trouxe nenhum, os que já funcionavam continuam
+        if (learned.urls.length > 0) db.keepOnlySources(trackerId, learned.urls);
+      } catch { /* segue sem aprender desta vez */ }
       if (mode === 'discovery') sourceResults = snapshot(db.listSources(trackerId));
     }
   }

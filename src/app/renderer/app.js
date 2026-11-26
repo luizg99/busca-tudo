@@ -275,6 +275,7 @@ async function viewDetail(t, focusId) {
       s.rule ? badge(s.rule.type === 'generic' ? 'dados estruturados' : 'regra aprendida', 'accent') : s.status === 'ok' ? badge('IA lê o trecho', 'accent') : null,
       s.lastValue != null ? h('span', { class: 'muted small' }, `último: ${money(s.lastValue)}`) : null),
     h('div', { class: 'small' }, link(s.url)),
+    s.origin?.viaUrl ? h('div', { class: 'muted small' }, 'Achado em: ', link(s.origin.viaUrl)) : null,
     s.lastError ? h('div', { class: s.status === 'ok' ? 'muted small' : 'alert', style: 'margin-top:8px' }, s.status === 'ok' ? null : icon('alert'), h('span', {}, s.lastError)) : null));
   const hist = checks.map((c) => h('div', { class: c.id === focusId ? 'card focus' : 'card', id: `check-${c.id}` },
     c.id === focusId ? h('div', { class: 'focus-note' }, icon('tag'), h('span', {}, 'Consulta selecionada')) : null,
@@ -289,6 +290,7 @@ async function viewDetail(t, focusId) {
       h('span', { class: 'val' }, f.found ? (f.value != null ? money(f.value, f.currency) : '—') : 'nada'),
       h('div', { class: 'info' }, h('div', {}, f.found ? (f.title || f.evidence || '') : f.evidence), f.sourceUrl ? h('div', {}, link(f.sourceUrl)) : null,
         f.ignoredReason ? h('div', { class: 'warn small' }, `Ignorada: ${f.ignoredReason}`) : null,
+        f.viaUrl ? h('div', { class: 'muted small' }, 'Achado em: ', link(f.viaUrl)) : null,
         f.coupon ? h('div', { class: 'small' }, `Cupom: ${f.coupon}`) : null,
         f.claimedValue != null ? h('div', { class: 'muted small' }, `O site da oferta informava ${money(f.claimedValue, f.currency)}; vale o preço lido na loja.`) : null,
         f.unverified ? h('div', { class: 'warn small' }, 'Preço não conferido na página da loja (informado pela busca).') : null),

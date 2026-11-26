@@ -99,7 +99,7 @@ describe('pipeline: limite de conferências, paralelo e cupom na rotina', () => 
     const item = { found: true, value: 3600, currency: 'BRL', title: 'Amazon', source_url: AMZ, evidence: 'e', confidence: 0.9, price_regex: REGEX };
     const s = setup([item], { [AMZ]: html('3600,00') });
     s.db.upsertSource(s.t.id, { url: 'https://seletronic.com.br/ps5', label: 'Seletronic', status: 'ok', lastValue: 3905, rule: { type: 'regex', pattern: REGEX } });
-    s.db.addCheck({ trackerId: s.t.id, at: '2026-01-10T09:00:00.000Z', ok: true, findings: [], model: 'm', costUsd: 0, mode: 'discovery', sources: [] });
+    s.db.addCheck({ trackerId: s.t.id, at: '2026-01-10T09:00:00.000Z', ok: true, findings: [{ found: true, value: 3905, currency: 'BRL', title: 'Seletronic', sourceUrl: 'https://seletronic.com.br/ps5', evidence: 'e', confidence: 0.9 }], model: 'm', costUsd: 0, mode: 'discovery', sources: [] });
     s.advance(10); // descoberta feita há pouco: antes do conserto a rotina registrava leitura vazia sem buscar
     const r = await runCheck(s.deps, s.t.id);
     expect(r.ok).toBe(true);
@@ -136,10 +136,10 @@ describe('pipeline: limite de conferências, paralelo e cupom na rotina', () => 
     expect(s.db.listChecks(s.t.id)[0].findings.filter((x) => x.ignoredReason)).toHaveLength(0);
   });
 
-  it('o 9º oferta que precisa de rede passa do limite de 8 e fica ignorada com motivo', async () => {
-    const items = Array.from({ length: 9 }, (_, i) => ({ found: true, value: 3500 + i, currency: 'BRL', title: `O${i}`, source_url: `https://blog${i}.com/ps5`, store: 'Amazon', store_url: AMZ, evidence: 'e', confidence: 0.9 }));
+  it('a 31ª oferta que precisa de rede passa da trava de segurança de 30 e fica ignorada com motivo', async () => {
+    const items = Array.from({ length: 31 }, (_, i) => ({ found: true, value: 3500 + i, currency: 'BRL', title: `O${i}`, source_url: `https://blog${i}.com/ps5`, store: 'Amazon', store_url: AMZ, evidence: 'e', confidence: 0.9 }));
     const pages: Record<string, string> = {};
-    for (let i = 0; i < 9; i++) pages[`https://blog${i}.com/ps5`] = `<a href="${AMZ}">x</a> R$ 3500`;
+    for (let i = 0; i < 31; i++) pages[`https://blog${i}.com/ps5`] = `<a href="${AMZ}">x</a> R$ 3500`;
     pages[AMZ] = ldPage(3500);
     const s = setup(items, pages);
     await runCheck(s.deps, s.t.id);

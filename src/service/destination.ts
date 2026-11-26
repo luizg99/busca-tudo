@@ -4,10 +4,11 @@ import type { FetchResult } from './fetcher';
 import { extractGenericPrice } from './html';
 import type { LlmClient } from './llm';
 import { applyRule, MAX_VARIATION, readSource } from './sources';
+import { pageShowsValue } from './teach';
 import { isTrustedUrl, normalizeDomain, type ResolveFinalUrl } from './trust';
 
 /** Ofertas cujo preço é conferido na página da loja por verificação (as demais ficam "não conferidas"). */
-const MAX_DESTINATION_CHECKS = 8;
+const MAX_DESTINATION_CHECKS = 30; // trava de segurança contra resposta anormal; na prática a busca traz bem menos
 
 export interface DestinationDeps {
   fetchPage(url: string): Promise<FetchResult>;
@@ -61,6 +62,8 @@ export async function verifyAtDestination(findings: Finding[], d: DestinationDep
     // na própria página onde a busca viu o preço, a regra que a IA montou lê de graça (sem gastar IA de novo)
     let value = dest === f.sourceUrl && f.priceRegex ? applyRule({ type: 'regex', pattern: f.priceRegex }, page.html) : undefined;
     if (value === undefined) value = extractGenericPrice(page.html);
+    // o preço informado está escrito na página da loja: o código confirma, sem gastar IA
+    if (value === undefined && pageShowsValue(page.html, f.value)) value = f.value;
     if (value === undefined) {
       const { result, usages: u } = await readSource(
         { fetchPage: async () => page, tracker: d.tracker, llm: d.llm, model: d.model },
@@ -85,6 +88,7 @@ export async function verifyAtDestination(findings: Finding[], d: DestinationDep
       value,
       sourceUrl: dest,
       ...(moved && sourceHost && sourceHost !== destHost && !f.via ? { via: sourceHost } : {}),
+      ...(moved && sourceHost !== destHost ? { viaUrl: f.sourceUrl } : {}),
       ...(Math.abs(value - f.value) / f.value > 0.005 ? { claimedValue: f.value } : {}),
       evidence: `${f.evidence} Preço lido na página da loja.`.trim(),
     };

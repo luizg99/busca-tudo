@@ -134,12 +134,12 @@ describe('learnSources', () => {
     expect(db.listSources(t.id)[0]).toMatchObject({ status: 'ok', rule: { type: 'generic' } });
   });
 
-  it('preço presente no texto mas sem regra válida: guarda sem regra (o plano B lê com IA barata)', async () => {
+  it('preço presente no texto mas sem regra da IA: o código monta a regra (a rotina não precisa de IA)', async () => {
     const { db, t, deps } = setup({ 'https://l/a': PAGE_TEXT });
     await learnSources(deps(), t, [f()]);
     const s = db.listSources(t.id)[0];
     expect(s.status).toBe('ok');
-    expect(s.rule).toBeUndefined();
+    expect(s.rule?.type).toBe('regex');
   });
 
   it('preço que não está no HTML (JavaScript) vira "unreadable" com o motivo', async () => {
@@ -154,13 +154,13 @@ describe('learnSources', () => {
     expect(db.listSources(t.id)[0]).toMatchObject({ status: 'failing', lastError: expect.stringContaining('bloqueou') });
   });
 
-  it('ignora achados de baixa confiança, sem URL ou em outra moeda; limita a 4 fontes', async () => {
+  it('ignora achados de baixa confiança, sem URL ou em outra moeda; guarda todas as demais', async () => {
     const pages: Record<string, string> = {};
     const findings: Finding[] = [];
     for (let i = 0; i < 6; i++) { pages[`https://l/${i}`] = PAGE_TEXT; findings.push(f({ sourceUrl: `https://l/${i}`, title: `L${i}` })); }
     findings.push(f({ sourceUrl: 'https://l/baixa', confidence: 0.3 }), f({ sourceUrl: undefined }), f({ sourceUrl: 'https://l/usd', currency: 'USD' }));
     const { db, t, deps } = setup(pages);
     await learnSources(deps(), t, findings);
-    expect(db.listSources(t.id)).toHaveLength(4);
+    expect(db.listSources(t.id)).toHaveLength(6);
   });
 });

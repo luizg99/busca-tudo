@@ -192,11 +192,11 @@ describe('pipeline: falhas de site e aviso no WhatsApp', () => {
     const siteWarnings = () => s.sent.filter((m) => m.includes('não consegui ler'));
     expect(siteWarnings()).toHaveLength(1);
     s.advance(24 * 60); // um dia depois: continua sem repetir
-    s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3524, label: 'Loja A' }]));
+    s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3524, label: 'Loja A' }, { url: 'https://l/b', value: 3600, label: 'Loja B' }])); // a busca do dia ainda traz a loja B
     await runCheck(s.deps, s.t.id);
     expect(siteWarnings()).toHaveLength(1);
     s.advance(7 * 24 * 60); // passou a semana: lembrete
-    s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3524, label: 'Loja A' }]));
+    s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3524, label: 'Loja A' }, { url: 'https://l/b', value: 3600, label: 'Loja B' }])); // a busca do dia ainda traz a loja B
     await runCheck(s.deps, s.t.id);
     expect(siteWarnings()).toHaveLength(2);
   });

@@ -206,7 +206,7 @@ describe('#11 avisos de site: um por episódio (lembrete só depois de 7 dias)',
     await runCheck(s.deps, s.t.id);
     expect(s.sent.filter((m) => m.includes('Loja B'))).toHaveLength(1);
     s.advance(5 * 24 * 60);
-    s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3500, label: 'Loja A' }]));
+    s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3500, label: 'Loja A' }, { url: 'https://l/b', value: 3600, label: 'Loja B' }])); // a busca do dia ainda traz a loja B
     await runCheck(s.deps, s.t.id);
     expect(s.sent.filter((m) => m.includes('Loja B'))).toHaveLength(2);
   });
