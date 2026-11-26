@@ -165,7 +165,7 @@ describe('pipeline: filtra por lojas confiáveis na descoberta', () => {
     const transport: Transport = { isReady: () => true, async sendToSelf(x) { sent.push(x); } };
     const now = () => new Date('2026-01-10T10:00:00Z');
     const fetched: string[] = [];
-    const pages: Record<string, string> = { [AMAZON]: page('3600,00'), [OFERTA]: page('3524,00'), [DESC]: page('2000,00') };
+    const pages: Record<string, string> = { [AMAZON]: page('3600,00'), [OFERTA]: `<a href="${GO}">comprar</a>${page('3524,00')}`, [DESC]: `<a href="${DESC}/comprar">comprar</a>${page('2000,00')}` };
     const fetchPage = async (url: string): Promise<FetchResult> => { fetched.push(url); return pages[url] ? { ok: true, html: pages[url] } : { ok: false, kind: 'http', status: 404, message: '404' }; };
     const resolveFinalUrl = async (url: string) => (url === GO ? ({ ok: true as const, finalUrl: 'https://www.amazon.com.br/dp/PS5?tag=x' }) : ({ ok: true as const, finalUrl: url }));
     const items = [
@@ -265,7 +265,7 @@ describe('API: lista de sites confiáveis e chave por acompanhamento', () => {
   it('GET /settings traz a lista padrão; PUT normaliza e guarda; vazio é permitido', async () => {
     const { call } = await api();
     expect((await call('GET', '/settings')).json.trustedSites).toEqual(DEFAULT_TRUSTED_SITES);
-    const put = await call('PUT', '/settings', { trustedSites: ['https://www.Amazon.com.br/', 'kabum.com.br', 'amazon.com.br', 'lixo lixo'] });
+    const put = await call('PUT', '/settings', { trustedSites: ['https://www.Amazon.com.br/', 'kabum.com.br', 'amazon.com.br'] });
     expect(put.json.trustedSites).toEqual(['amazon.com.br', 'kabum.com.br']);
     expect((await call('GET', '/settings')).json.trustedSites).toEqual(['amazon.com.br', 'kabum.com.br']);
     expect((await call('PUT', '/settings', { trustedSites: [] })).json.trustedSites).toEqual([]);
@@ -283,7 +283,7 @@ describe('API: lista de sites confiáveis e chave por acompanhamento', () => {
   });
 });
 
-describe('banco antigo: coluna only_trusted entra ligada (padrão) e fontes ganham trusted_via', () => {
+describe('banco: novos acompanhamentos nascem com only_trusted ligado e fontes ganham trusted_via', () => {
   it('createTracker sem o campo grava onlyTrusted=true', () => {
     const db = openDb(':memory:');
     const t = db.createTracker({ name: 'x', kind: 'price', goal: 'g', include: [], exclude: [], intervalMinutes: 60, alertCondition: { type: 'below_last' }, digest: 'none' });

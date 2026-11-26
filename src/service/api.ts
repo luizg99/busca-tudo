@@ -157,7 +157,11 @@ export function createApi(deps: ApiDeps): Server {
         }
         if (b.trustedSites !== undefined) {
           if (!Array.isArray(b.trustedSites)) throw new HttpError(400, 'A lista de sites confiáveis deve ser uma lista de endereços.');
-          db.setSetting('trusted_sites', JSON.stringify(normalizeTrustedList(b.trustedSites)));
+          const entries = (b.trustedSites as unknown[]).filter((x) => !(typeof x === 'string' && x.trim() === ''));
+          const clean = normalizeTrustedList(entries);
+          const invalid = entries.filter((x) => normalizeTrustedList([x]).length === 0);
+          if (invalid.length) throw new HttpError(400, `Endereço inválido na lista de sites confiáveis: ${invalid.slice(0, 3).map(String).join(', ')}. Use o domínio, por exemplo amazon.com.br.`);
+          db.setSetting('trusted_sites', JSON.stringify(clean));
         }
         if (b.sendReportsToWhatsApp !== undefined) db.setSetting('send_reports_whatsapp', b.sendReportsToWhatsApp ? '1' : '0');
         return send(res, 200, { ...readSettings(db), hasApiKey: deps.hasApiKey() });

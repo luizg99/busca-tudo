@@ -136,6 +136,7 @@ export function decideAlert(t: Tracker, findings: Finding[], ctx: DecisionContex
   // loja que vende e onde a oferta foi achada (ex.: "Amazon · achado em ofertinha.com.br") e o cupom, se houver
   if (best.store || best.via) lines.push(`Loja: ${best.store ?? best.via}${best.via ? ` · achado em ${best.via}` : ''}`);
   if (best.coupon) lines.push(`Cupom: ${best.coupon}`);
+  if (best.storeUrl && best.storeUrl !== best.sourceUrl) lines.push(`Comprar: ${best.storeUrl}`);
   if (best.sourceUrl) lines.push(best.sourceUrl);
   const text = lines.join('\n');
   return { baseline: false, ignored, alert: { text, sourceUrl: best.sourceUrl, value } };

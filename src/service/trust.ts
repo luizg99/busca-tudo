@@ -86,7 +86,26 @@ export type ResolveFinalUrl = (url: string) => Promise<{ ok: true; finalUrl: str
  * desconhecida (blog, agregador de cupom) só vale se o link da loja levar a uma loja confiável, conferido de verdade
  * (seguindo os redirecionamentos do link de saída): o nome da loja citado só no texto não basta.
  */
-export async function classifyFinding(f: Finding, trusted: string[], resolve: ResolveFinalUrl): Promise<TrustVerdict> {
+/** Endereços (href) de uma página, absolutos e sem fragmento. */
+export function extractLinks(html: string, baseUrl: string): string[] {
+  const out: string[] = [];
+  const re = /href\s*=\s*["']([^"'\s>]+)["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) && out.length < 1000) {
+    try {
+      const u = new URL(m[1].replace(/&amp;/g, '&'), baseUrl);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') continue;
+      u.hash = '';
+      out.push(u.href);
+    } catch { /* link inválido: ignora */ }
+  }
+  return out;
+}
+
+/** Links da página de um site desconhecido, para conferir o que a IA afirmou; undefined = não deu para abrir. */
+export type PageLinks = (pageUrl: string) => Promise<string[] | undefined>;
+
+export async function classifyFinding(f: Finding, trusted: string[], resolve: ResolveFinalUrl, pageLinks?: PageLinks): Promise<TrustVerdict> {
   if (!f.sourceUrl) return { verdict: 'ignored', reason: 'Oferta sem endereço de origem para conferir.' };
   if (isTrustedUrl(f.sourceUrl, trusted)) return { verdict: 'trusted' };
 
@@ -94,7 +113,23 @@ export async function classifyFinding(f: Finding, trusted: string[], resolve: Re
   if (!f.storeUrl) {
     return { verdict: 'ignored', reason: `Site desconhecido (${via}) e a loja${f.store ? ` (${f.store})` : ''} é citada sem link para conferir.` };
   }
-  if (isTrustedUrl(f.storeUrl, trusted)) return { verdict: 'via_trusted', via };
+  // o endereço da loja vem da IA: confere na própria página do site desconhecido (e não só no que a IA disse)
+  let links: string[] | undefined;
+  if (pageLinks) {
+    links = await pageLinks(f.sourceUrl);
+    if (!links) return { verdict: 'ignored', reason: `Não consegui abrir a página de ${via} para conferir o link da loja.` };
+  }
+  if (isTrustedUrl(f.storeUrl, trusted)) {
+    if (links && !links.some((l) => isTrustedUrl(l, trusted))) {
+      return { verdict: 'ignored', reason: `A página de ${via} não tem link para uma loja confiável.` };
+    }
+    return { verdict: 'via_trusted', via };
+  }
+  if (links) {
+    let wanted: string;
+    try { const u = new URL(f.storeUrl); u.hash = ''; wanted = u.href; } catch { wanted = f.storeUrl; }
+    if (!links.includes(wanted)) return { verdict: 'ignored', reason: `O link da loja não aparece na página de ${via}.` };
+  }
 
   const r = await resolve(f.storeUrl);
   if (!r.ok) return { verdict: 'ignored', reason: `Não consegui conferir o link da loja em ${via}: ${r.message}` };

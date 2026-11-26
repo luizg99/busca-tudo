@@ -17,6 +17,9 @@ export interface CheckRow extends Omit<CheckInput, 'sources'> {
   id: number;
   sources: SourceResult[];
 }
+/** De onde a oferta veio (site desconhecido que leva a uma loja confiável), para mostrar loja e cupom nas leituras seguintes. */
+export interface SourceOrigin { store?: string; storeUrl?: string; coupon?: string; via?: string }
+
 export interface SourceRow {
   id: number;
   trackerId: number;
@@ -35,10 +38,13 @@ export interface SourceRow {
   failingSince?: string;
   /** Fonte de site desconhecido cujo link de saída foi conferido e leva a uma loja confiável. */
   trustedVia?: boolean;
+  origin?: SourceOrigin;
   createdAt: string;
 }
 export interface SourceInput {
   trustedVia?: boolean;
+  /** undefined mantém o que já existe; null apaga. */
+  origin?: SourceOrigin | null;
   url: string;
   label?: string;
   rule?: PriceRule;
@@ -123,7 +129,9 @@ export function openDb(path: string) {
   ensureColumn('checks', 'mode', 'TEXT');
   ensureColumn('sources', 'failing_since', 'TEXT');
   ensureColumn('sources', 'trusted_via', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn('trackers', 'only_trusted', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn('sources', 'origin_json', 'TEXT');
+  // acompanhamentos que já existiam seguem sem restrição (só os novos nascem com "só lojas confiáveis")
+  ensureColumn('trackers', 'only_trusted', 'INTEGER NOT NULL DEFAULT 0');
 
   const toTracker = (r: any): Tracker => ({
     id: r.id,
@@ -167,6 +175,7 @@ export function openDb(path: string) {
     lastNotifiedAt: r.last_notified_at ?? undefined,
     failingSince: r.failing_since ?? undefined,
     trustedVia: !!r.trusted_via,
+    origin: r.origin_json ? (JSON.parse(r.origin_json) as SourceOrigin) : undefined,
     createdAt: r.created_at,
   });
   const toAlert = (r: any): AlertRow => ({
@@ -302,17 +311,18 @@ export function openDb(path: string) {
       const existing = raw.prepare('SELECT * FROM sources WHERE tracker_id = ? AND url = ?').get(trackerId, s.url) as any;
       if (existing) {
         raw
-          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ?, failing_since = ?, last_notified_at = ?, trusted_via = ? WHERE id = ?')
+          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ?, failing_since = ?, last_notified_at = ?, trusted_via = ?, origin_json = ? WHERE id = ?')
           .run(s.label ?? existing.label, s.rule ? JSON.stringify(s.rule) : existing.rule_json, s.status,
             s.lastValue ?? existing.last_value, s.status === 'ok' ? null : s.lastError ?? existing.last_error,
             s.status === 'ok' ? 0 : existing.consecutive_failures, s.status === 'ok' ? null : existing.failing_since,
             s.status === 'ok' ? null : existing.last_notified_at, // voltou a funcionar: um problema futuro é um episódio novo
-            s.trustedVia === undefined ? existing.trusted_via : s.trustedVia ? 1 : 0, existing.id);
+            s.trustedVia === undefined ? existing.trusted_via : s.trustedVia ? 1 : 0,
+            s.origin === undefined ? existing.origin_json : s.origin ? JSON.stringify(s.origin) : null, existing.id);
         return api.getSource(existing.id)!;
       }
       const info = raw
-        .prepare('INSERT INTO sources (tracker_id, url, label, rule_json, status, last_value, last_error, created_at, trusted_via) VALUES (?,?,?,?,?,?,?,?,?)')
-        .run(trackerId, s.url, s.label ?? null, s.rule ? JSON.stringify(s.rule) : null, s.status, s.lastValue ?? null, s.lastError ?? null, new Date().toISOString(), s.trustedVia ? 1 : 0);
+        .prepare('INSERT INTO sources (tracker_id, url, label, rule_json, status, last_value, last_error, created_at, trusted_via, origin_json) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run(trackerId, s.url, s.label ?? null, s.rule ? JSON.stringify(s.rule) : null, s.status, s.lastValue ?? null, s.lastError ?? null, new Date().toISOString(), s.trustedVia ? 1 : 0, s.origin ? JSON.stringify(s.origin) : null);
       return api.getSource(Number(info.lastInsertRowid))!;
     },
     getSource(id: number): SourceRow | undefined {

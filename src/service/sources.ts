@@ -274,6 +274,8 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
     const url = f.sourceUrl!;
     const value = f.value as number;
     const label = f.title;
+    // loja, link da loja e cupom ficam com a fonte: a rotina por código os mostra nos alertas seguintes (null apaga o antigo)
+    const origin = f.via || f.store || f.coupon || f.storeUrl ? { store: f.store, storeUrl: f.storeUrl, coupon: f.coupon, via: f.via } : null;
     // Uma fonte que já funcionava não é rebaixada por uma falha pontual: quem decide isso é a rotina (falhas seguidas).
     const known = deps.db.listSources(tracker.id).find((s) => s.url === url);
     const alreadyUsable = known !== undefined && known.status !== 'unreadable';
@@ -282,7 +284,7 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
       // Falha passageira (timeout, rede, bloqueio, erro do servidor) não diz nada sobre a página: a fonte fica como
       // "failing" e a rotina tenta de novo. Só é "unreadable" quando a falha é definitiva (página inexistente/inválida).
       const transient = page.kind === 'timeout' || page.kind === 'network' || page.kind === 'blocked' || (page.kind === 'http' && (page.status ?? 0) >= 500);
-      if (!alreadyUsable) deps.db.upsertSource(tracker.id, { url, label, status: transient ? 'failing' : 'unreadable', lastError: page.message, trustedVia: !!f.via });
+      if (!alreadyUsable) deps.db.upsertSource(tracker.id, { url, label, status: transient ? 'failing' : 'unreadable', lastError: page.message, trustedVia: !!f.via, origin });
       continue;
     }
     const close = (v: number | undefined) => v !== undefined && Math.abs(v - value) / value <= LEARN_TOLERANCE;
@@ -292,16 +294,16 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
       if (close(applyRule(rule, page.html))) {
         // se os dados estruturados também reproduzem o preço, servem de reserva quando a regra quebrar
         if (close(extractGenericPrice(page.html))) rule.genericOk = true;
-        deps.db.upsertSource(tracker.id, { url, label, rule, status: 'ok', lastValue: value, trustedVia: !!f.via });
+        deps.db.upsertSource(tracker.id, { url, label, rule, status: 'ok', lastValue: value, trustedVia: !!f.via, origin });
         continue;
       }
     }
     if (close(extractGenericPrice(page.html))) {
-      deps.db.upsertSource(tracker.id, { url, label, rule: { type: 'generic' }, status: 'ok', lastValue: value, trustedVia: !!f.via });
+      deps.db.upsertSource(tracker.id, { url, label, rule: { type: 'generic' }, status: 'ok', lastValue: value, trustedVia: !!f.via, origin });
       continue;
     }
     if (valueInText(htmlToText(page.html), value)) {
-      deps.db.upsertSource(tracker.id, { url, label, status: 'ok', lastValue: value, trustedVia: !!f.via });
+      deps.db.upsertSource(tracker.id, { url, label, status: 'ok', lastValue: value, trustedVia: !!f.via, origin });
       continue;
     }
     if (alreadyUsable) continue;

@@ -7,7 +7,10 @@ import { fetchPage as defaultFetchPage, resolveFinalUrl as defaultResolveFinalUr
 import type { LlmClient } from './llm';
 import type { Notifier } from './notifier';
 import { learnSources, readSource } from './sources';
-import { classifyFinding, getTrustedSites, isTrustedUrl, type ResolveFinalUrl } from './trust';
+import { classifyFinding, extractLinks, getTrustedSites, isTrustedUrl, type PageLinks, type ResolveFinalUrl } from './trust';
+
+/** Cada conferência de link de saída espera pouco: são várias em paralelo e a verificação inteira não pode travar. */
+const TRUST_RESOLVE_TIMEOUT_MS = 6000;
 
 /** Ofertas conferidas (com seguimento de link) por busca completa. */
 const MAX_TRUST_CHECKS = 8;
@@ -16,20 +19,20 @@ const MAX_TRUST_CHECKS = 8;
  * Aplica a lista de lojas confiáveis às ofertas da busca: ofertas de loja desconhecida ficam marcadas como ignoradas
  * (com o motivo) e continuam no histórico; ofertas achadas num site desconhecido, mas de loja confiável, ganham `via`.
  */
-async function applyTrust(findings: Finding[], trusted: string[], resolve: ResolveFinalUrl): Promise<Finding[]> {
-  let checked = 0;
-  const out: Finding[] = [];
-  for (const f of findings) {
-    if (!f.found || typeof f.value !== 'number' || f.ignoredReason) { out.push(f); continue; }
-    if (checked++ >= MAX_TRUST_CHECKS) { out.push({ ...f, ignoredReason: 'Limite de ofertas conferidas por verificação atingido.' }); continue; }
+async function applyTrust(findings: Finding[], trusted: string[], resolve: ResolveFinalUrl, pageLinks: PageLinks): Promise<Finding[]> {
+  // só as ofertas que exigem rede (site desconhecido) entram no limite; as de loja confiável nunca são descartadas por ele
+  const needsNetwork = (f: Finding) => f.found && typeof f.value === 'number' && !f.ignoredReason && !!f.sourceUrl && !isTrustedUrl(f.sourceUrl, trusted);
+  let slot = 0;
+  return Promise.all(findings.map(async (f): Promise<Finding> => {
+    if (!f.found || typeof f.value !== 'number' || f.ignoredReason) return f;
+    if (needsNetwork(f) && slot++ >= MAX_TRUST_CHECKS) return { ...f, ignoredReason: 'Limite de ofertas conferidas por verificação atingido.' };
     try {
-      const v = await classifyFinding(f, trusted, resolve);
-      out.push(v.verdict === 'ignored' ? { ...f, ignoredReason: v.reason } : v.verdict === 'via_trusted' ? { ...f, via: v.via } : f);
+      const v = await classifyFinding(f, trusted, resolve, pageLinks);
+      return v.verdict === 'ignored' ? { ...f, ignoredReason: v.reason } : v.verdict === 'via_trusted' ? { ...f, via: v.via } : f;
     } catch (e) {
-      out.push({ ...f, ignoredReason: `Não consegui conferir a loja: ${(e as Error).message}` });
+      return { ...f, ignoredReason: `Não consegui conferir a loja: ${(e as Error).message}` };
     }
-  }
-  return out;
+  }));
 }
 
 export interface PipelineDeps {
@@ -199,6 +202,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
         if (result.ok && result.value !== undefined) {
           findings.push({
             found: true, value: result.value, currency: 'BRL', title: s.label, sourceUrl: s.url,
+            ...(s.origin ? { via: s.origin.via, store: s.origin.store, storeUrl: s.origin.storeUrl, coupon: s.origin.coupon } : {}),
             evidence: `Lido da página por ${result.method === 'ai' ? 'IA (trecho)' : 'código'}.`, confidence: result.method === 'ai' ? 0.75 : 0.95,
           });
         }
@@ -239,7 +243,18 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
       return { ok: false, alerted: false, baseline: false, error };
     }
     usages.push(...outcome.usages);
-    findings = filterByTrust ? await applyTrust(outcome.findings, trustedSites, deps.resolveFinalUrl ?? defaultResolveFinalUrl) : outcome.findings;
+    if (filterByTrust) {
+      const cache = new Map<string, Promise<string[] | undefined>>();
+      const pageLinks: PageLinks = (url) => {
+        let p = cache.get(url);
+        if (!p) { p = fetchPage(url).then((r) => (r.ok ? extractLinks(r.html, url) : undefined), () => undefined); cache.set(url, p); }
+        return p;
+      };
+      const resolve = deps.resolveFinalUrl ?? ((u: string) => defaultResolveFinalUrl(u, { timeoutMs: TRUST_RESOLVE_TIMEOUT_MS }));
+      findings = await applyTrust(outcome.findings, trustedSites, resolve, pageLinks);
+    } else {
+      findings = outcome.findings;
+    }
     if (tracker.kind === 'price') {
       // aprender fontes é um extra: um erro aqui não pode perder o check nem o custo da busca (e causar nova busca em seguida)
       try { await learnSources({ db, fetchPage }, tracker, findings); } catch { /* segue sem aprender desta vez */ }

@@ -77,6 +77,8 @@ export function validateNewTracker(t: NewTracker): string[] {
   if (!Number.isFinite(t.intervalMinutes) || t.intervalMinutes < MIN_INTERVAL_MINUTES) {
     errors.push(`O intervalo mínimo é de ${MIN_INTERVAL_MINUTES} minutos.`);
   }
+  const ot = (t as { onlyTrusted?: unknown }).onlyTrusted;
+  if (ot !== undefined && typeof ot !== 'boolean') errors.push('"Só lojas confiáveis" deve ser verdadeiro ou falso.');
   if (t.alertCondition.type === 'below_value' && !(t.alertCondition.value > 0)) {
     errors.push('O valor de alerta deve ser maior que zero.');
   }
