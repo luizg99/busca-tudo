@@ -1,7 +1,7 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import type { Readable } from 'node:stream';
+import { pipeline, type Readable } from 'node:stream';
 import zlib from 'node:zlib';
 
 export type FetchResult =
@@ -51,7 +51,8 @@ function isReservedIpv4(a: number, b: number, c: number): boolean {
 
 /**
  * Endereços que não são da internet pública. IPv4: faixas reservadas. IPv6: só é aceito o unicast global (2000::/3);
- * IPv4 mapeado (::ffff:) e 6to4 (2002::/16) têm o IPv4 embutido verificado; Teredo e documentação são bloqueados.
+ * IPv4 mapeado (::ffff:), 6to4 (2002::/16) e NAT64 (64:ff9b::/96) têm o IPv4 embutido verificado; Teredo e documentação
+ * são bloqueados, e todo o resto fora de 2000::/3 também (inclusive 64:ff9b:1::/48).
  */
 export function isPrivateHost(hostRaw: string): boolean {
   const h = hostRaw.toLowerCase().replace(/^\[|\]$/g, '');
@@ -64,11 +65,21 @@ export function isPrivateHost(hostRaw: string): boolean {
     if (g[0] === 0x2002) return v4(g[1], g[2]); // 6to4
     if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return v4(g[6], g[7]); // NAT64 (DNS64): 64:ff9b::/96
     if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true; // Teredo e documentação
-    return !(g[0] >= 0x2000 && g[0] <= 0x3fff); // fora de 2000::/3 (inclui ::1, fc00::, fe80::, ff00::, 64:ff9b::, ::a.b.c.d)
+    return !(g[0] >= 0x2000 && g[0] <= 0x3fff); // fora de 2000::/3: ::1, fc00::, fe80::, ff00::, ::a.b.c.d, 64:ff9b:1::...
   }
   const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!m) return false;
   return isReservedIpv4(Number(m[1]), Number(m[2]), Number(m[3]));
+}
+
+/** Loopback em qualquer forma: 127.x, ::1 e IPv4 mapeado (::ffff:127.x, decimal ou hexadecimal). */
+export function isLoopbackAddress(addr: string): boolean {
+  const h = addr.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h.includes(':')) return /^127\./.test(h);
+  const g = parseIpv6(h);
+  if (!g) return false;
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true; // ::1
+  return g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff && g[6] >> 8 === 127; // ::ffff:127.x.x.x
 }
 
 const internal = (): FetchResult => ({ ok: false, kind: 'invalid', message: 'Endereço interno bloqueado (só sites públicos são acessados).' });
@@ -89,9 +100,12 @@ function decodeBody(bytes: Uint8Array, contentType: string | undefined): string 
 export interface FetchOptions {
   timeoutMs?: number;
   maxBytes?: number;
-  /** Hosts/IPs isentos do bloqueio de endereço interno (existe para os testes locais). */
+  /**
+   * Só para testes locais. Cada entrada isenta exatamente: (1) o host da URL com esse nome/IP e (2) para um NOME listado,
+   * os endereços de loopback para onde ele resolve. Um IP privado listado aqui é isento justamente por ser listado.
+   */
   allowedHosts?: string[];
-  /** IPs resolvidos isentos do bloqueio (testes). */
+  /** Só para testes: IPs resolvidos isentos do bloqueio. */
   allowResolvedHosts?: string[];
   /** Resolvedor de DNS (injetável nos testes). */
   resolver?: (host: string) => Promise<ResolvedAddress[]>;
@@ -141,8 +155,7 @@ export async function fetchPage(url: string, opts: FetchOptions = {}): Promise<F
         if (addrs.length === 0) return cb(Object.assign(new Error(`Não foi possível resolver ${hostname}`), { code: 'ENOTFOUND' }));
         // um nome liberado só isenta endereços de loopback (uso nos testes locais), nunca redes privadas ou metadados de nuvem
         const hostAllowed = allowedHosts.has(hostname.toLowerCase());
-        const isLoopback = (addr: string) => /^127\./.test(addr) || addr === '::1';
-        if (addrs.some((a) => isPrivateHost(a.address) && !exemptResolved.has(a.address.toLowerCase()) && !(hostAllowed && isLoopback(a.address)))) {
+        if (addrs.some((a) => isPrivateHost(a.address) && !exemptResolved.has(a.address.toLowerCase()) && !(hostAllowed && isLoopbackAddress(a.address)))) {
           return cb(Object.assign(new Error('Endereço interno'), { code: 'EINTERNAL' }));
         }
         return options?.all ? cb(null, addrs) : cb(null, addrs[0].address, addrs[0].family);
@@ -191,12 +204,14 @@ export async function fetchPage(url: string, opts: FetchOptions = {}): Promise<F
       }
 
       const encoding = String(res.headers['content-encoding'] ?? '').toLowerCase();
-      const stream: Readable = encoding.includes('gzip') ? res.pipe(zlib.createGunzip())
-        : encoding.includes('deflate') ? res.pipe(zlib.createInflate())
-        : encoding.includes('br') ? res.pipe(zlib.createBrotliDecompress())
-        : res;
+      const decompressor = encoding.includes('gzip') ? zlib.createGunzip()
+        : encoding.includes('deflate') ? zlib.createInflate()
+        : encoding.includes('br') ? zlib.createBrotliDecompress()
+        : undefined;
+      // pipeline propaga a queda da conexão para o descompactador (res.pipe não faria isso)
+      if (decompressor) pipeline(res, decompressor, (err) => { if (err) decompressor.destroy(err); });
+      const stream: Readable = decompressor ?? res;
       const body = await readBody(stream, res, maxBytes);
-      if (controller.signal.aborted) return { ok: false, kind: 'timeout', message: `O site demorou mais de ${Math.round(timeoutMs / 1000)} s para responder.` };
       return { ok: true, html: decodeBody(body, res.headers['content-type']) };
     }
     return { ok: false, kind: 'http', message: 'O site fez redirecionamentos demais.' };

@@ -28,29 +28,33 @@ const sandbox = vm.createContext({ re: undefined as unknown, text: '' });
 const SMALL_REPEAT_MAX = 3;
 
 /**
- * Quantificador que começa em `i`. `unbounded`: *, + e {n,} (realmente sem limite). `wide`: sem limite ou com limite
- * grande (>3). Dentro de um grupo só importa o `unbounded`; o `wide` conta quando é o grupo que se repete.
+ * Quantificador que começa em `i`.
+ * - `wide`: pode repetir muitas vezes (*, +, {n,} ou máximo > 3). É o que importa quando o GRUPO inteiro se repete.
+ * - `variable`: a largura do que ele casa varia (*, +, {n,} ou {n,m} com m > n e m > 3). É o que importa DENTRO do
+ *   grupo: largura fixa ({4}) é segura; {1,50} não é.
  */
-function quantifierAt(p: string, i: number): { unbounded: boolean; wide: boolean; length: number } {
+function quantifierAt(p: string, i: number): { wide: boolean; variable: boolean; length: number } {
   const c = p[i];
-  if (c === '*' || c === '+') return { unbounded: true, wide: true, length: p[i + 1] === '?' ? 2 : 1 };
-  if (c === '?') return { unbounded: false, wide: false, length: p[i + 1] === '?' ? 2 : 1 };
+  if (c === '*' || c === '+') return { wide: true, variable: true, length: p[i + 1] === '?' ? 2 : 1 };
+  if (c === '?') return { wide: false, variable: false, length: p[i + 1] === '?' ? 2 : 1 };
   if (c === '{') {
     const m = /^\{(\d+)(,(\d*))?\}/.exec(p.slice(i, i + 16));
     if (m) {
-      const max = m[2] === undefined ? Number(m[1]) : m[3] === '' ? Infinity : Number(m[3]);
-      return { unbounded: max === Infinity, wide: max > SMALL_REPEAT_MAX, length: m[0].length + (p[i + m[0].length] === '?' ? 1 : 0) };
+      const min = Number(m[1]);
+      const max = m[2] === undefined ? min : m[3] === '' ? Infinity : Number(m[3]);
+      return { wide: max > SMALL_REPEAT_MAX, variable: max > min && max > SMALL_REPEAT_MAX, length: m[0].length + (p[i + m[0].length] === '?' ? 1 : 0) };
     }
   }
-  return { unbounded: false, wide: false, length: 0 };
+  return { wide: false, variable: false, length: 0 };
 }
 
 /**
- * Detecta padrões com risco de backtracking catastrófico (ReDoS): grupo que contém repetição sem limite (em qualquer
- * profundidade) ou alternância e que é, ele mesmo, repetido sem limite. Repetição limitada, como {1,3}, é aceita.
+ * Detecta padrões com risco de backtracking catastrófico (ReDoS): grupo que contém repetição de largura variável (em
+ * qualquer profundidade) ou alternância e que é, ele mesmo, repetido muitas vezes. Largura fixa, como (\d{4}-\d{2})+, e
+ * repetição pequena, como {1,3}, são aceitas.
  */
 export function isRiskyPattern(pattern: string): boolean {
-  type Group = { unbounded: boolean; alt: boolean };
+  type Group = { variable: boolean; alt: boolean };
   const stack: Group[] = [];
   let i = 0;
   while (i < pattern.length) {
@@ -63,7 +67,7 @@ export function isRiskyPattern(pattern: string): boolean {
       continue;
     }
     if (c === '(') {
-      stack.push({ unbounded: false, alt: false });
+      stack.push({ variable: false, alt: false });
       i++;
       if (pattern[i] === '?') {
         i++;
@@ -81,10 +85,10 @@ export function isRiskyPattern(pattern: string): boolean {
       const q = quantifierAt(pattern, i);
       i += q.length;
       if (g) {
-        if (q.wide && (g.unbounded || g.alt)) return true; // grupo com repetição sem limite (ou alternância) repetido muitas vezes
+        if (q.wide && (g.variable || g.alt)) return true; // largura variável (ou alternância) dentro de grupo repetido muitas vezes
         const parent = stack[stack.length - 1];
         if (parent) {
-          parent.unbounded = parent.unbounded || g.unbounded || q.unbounded;
+          parent.variable = parent.variable || g.variable || q.variable;
           parent.alt = parent.alt || g.alt;
         }
       }
@@ -97,7 +101,7 @@ export function isRiskyPattern(pattern: string): boolean {
     }
     if (c === '*' || c === '+' || c === '{') {
       const q = quantifierAt(pattern, i);
-      if (q.unbounded && stack.length) stack[stack.length - 1].unbounded = true;
+      if (q.variable && stack.length) stack[stack.length - 1].variable = true;
       i += q.length || 1;
       continue;
     }

@@ -158,7 +158,11 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
   }
 
   if (needDiscovery) {
-    if (searchCoolingDown) return recordFailure(COOLING_MESSAGE);
+    if (searchCoolingDown) {
+      // clique manual dentro da espera: nada foi lido nem buscado, então só devolve a mensagem (sem histórico nem avisos)
+      if (opts.manual && sourceResults.length === 0) return { ok: false, alerted: false, baseline: false, error: COOLING_MESSAGE };
+      return recordFailure(COOLING_MESSAGE);
+    }
     let outcome;
     try {
       outcome = await runSmartCheck(llm, tracker, models);
