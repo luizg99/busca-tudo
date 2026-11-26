@@ -1,6 +1,6 @@
 import type { Usage } from './cost';
 import type { Db } from './db';
-import { reliableValue } from './decide';
+import { bestReliable } from './decide';
 import type { LlmClient } from './llm';
 import type { Notifier } from './notifier';
 
@@ -19,6 +19,11 @@ export interface TrackerStats {
   checks: number;
   failures: number;
   min?: number;
+  /** Consulta (e momento) em que o menor valor apareceu pela 1ª vez, e como ele é pago. */
+  minCheckId?: number;
+  minAt?: string;
+  minPayment?: 'vista' | 'parcelado';
+  minPaymentNote?: string;
   max?: number;
   avg?: number;
   alerts: number;
@@ -33,10 +38,14 @@ export type DigestPeriod = 'daily' | 'weekly';
 export function computeStats(db: Db, trackerId: number, fromIso: string, toIso: string): TrackerStats {
   const checks = db.listChecksBetween(trackerId, fromIso, toIso);
   const values: number[] = [];
+  let minCheck: { id: number; at: string; value: number; payment?: 'vista' | 'parcelado'; paymentNote?: string } | undefined;
   for (const c of checks) {
     if (!c.ok) continue;
-    const v = reliableValue(c.findings);
-    if (v !== undefined) values.push(v);
+    const b = bestReliable(c.findings);
+    if (!b) continue;
+    const v = b.value as number;
+    values.push(v);
+    if (!minCheck || v < minCheck.value) minCheck = { id: c.id, at: c.at, value: v, payment: b.payment, paymentNote: b.paymentNote };
   }
   const alerts = db.listAlerts(trackerId, fromIso, toIso);
   const sources = db.listSources(trackerId);
@@ -48,6 +57,7 @@ export function computeStats(db: Db, trackerId: number, fromIso: string, toIso: 
     sourcesOk: sources.filter((s) => s.status === 'ok').length,
     checks: checks.length,
     failures: checks.filter((c) => !c.ok).length,
+    ...(minCheck ? { minCheckId: minCheck.id, minAt: minCheck.at, ...(minCheck.payment ? { minPayment: minCheck.payment } : {}), ...(minCheck.paymentNote ? { minPaymentNote: minCheck.paymentNote } : {}) } : {}),
     ...(values.length
       ? { min: Math.min(...values), max: Math.max(...values), avg: values.reduce((a, b) => a + b, 0) / values.length }
       : {}),

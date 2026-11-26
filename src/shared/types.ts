@@ -40,6 +40,10 @@ export interface Finding {
   storeUrl?: string;
   /** Cupom e condições, se a oferta depender de um. */
   coupon?: string;
+  /** Como o preço informado é pago: 'vista' (total à vista, Pix/boleto) ou 'parcelado' (só no cartão parcelado). */
+  payment?: 'vista' | 'parcelado';
+  /** Detalhe do pagamento, ex.: "Pix" ou "10x sem juros no cartão". */
+  paymentNote?: string;
   /** Preenchido pelo app: domínio do site desconhecido por onde uma loja confiável foi encontrada. */
   via?: string;
   /** Preenchido pelo app: motivo de a oferta ter sido ignorada (loja desconhecida). */

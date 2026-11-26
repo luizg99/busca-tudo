@@ -212,6 +212,11 @@ export function createApi(deps: ApiDeps): Server {
       return send(res, 200, db.listChecks(Number(m[1]), Number(url.searchParams.get('limit') ?? 100)));
     }
 
+    if (method === 'GET' && (m = path.match(/^\/trackers\/(\d+)\/checks\/(\d+)$/))) {
+      const check = db.getCheck(Number(m[1]), Number(m[2]));
+      return check ? send(res, 200, check) : send(res, 404, { error: 'Consulta não encontrada.' });
+    }
+
     if (method === 'GET' && (m = path.match(/^\/trackers\/(\d+)\/sources$/))) {
       return send(res, 200, db.listSources(Number(m[1])));
     }

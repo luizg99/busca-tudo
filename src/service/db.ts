@@ -18,7 +18,7 @@ export interface CheckRow extends Omit<CheckInput, 'sources'> {
   sources: SourceResult[];
 }
 /** De onde a oferta veio (site desconhecido que leva a uma loja confiável), para mostrar loja e cupom nas leituras seguintes. */
-export interface SourceOrigin { store?: string; storeUrl?: string; coupon?: string; via?: string }
+export interface SourceOrigin { store?: string; storeUrl?: string; coupon?: string; via?: string; payment?: 'vista' | 'parcelado'; paymentNote?: string }
 
 export interface SourceRow {
   id: number;
@@ -239,6 +239,10 @@ export function openDb(path: string) {
         .prepare('SELECT * FROM checks WHERE tracker_id = ? ORDER BY at DESC, id DESC LIMIT ?')
         .all(trackerId, limit)
         .map(toCheck);
+    },
+    getCheck(trackerId: number, id: number): CheckRow | undefined {
+      const r = raw.prepare('SELECT * FROM checks WHERE id = ? AND tracker_id = ?').get(id, trackerId);
+      return r ? toCheck(r) : undefined;
     },
     listChecksBetween(trackerId: number, fromIso: string, toIso: string): CheckRow[] {
       return raw

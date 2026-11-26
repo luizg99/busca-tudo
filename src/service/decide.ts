@@ -29,6 +29,18 @@ export function isReliablePrice(f: Finding): boolean {
   return f.found && !f.ignoredReason && typeof f.value === 'number' && f.value > 0 && f.confidence >= MIN_CONFIDENCE && isBrl(f);
 }
 
+/** Descrição curta do pagamento: "à vista (Pix)", "só parcelado (10x sem juros)" ou undefined se não se sabe. */
+export function paymentLabel(f: Pick<Finding, 'payment' | 'paymentNote'>): string | undefined {
+  if (!f.payment) return undefined;
+  const base = f.payment === 'vista' ? 'à vista' : 'só parcelado';
+  return f.paymentNote ? `${base} (${f.paymentNote})` : base;
+}
+
+/** A oferta confiável de menor valor de uma verificação. */
+export function bestReliable(findings: Finding[]): Finding | undefined {
+  return findings.filter(isReliablePrice).reduce<Finding | undefined>((m, f) => (!m || (f.value as number) < (m.value as number) ? f : m), undefined);
+}
+
 /** Menor valor confiável de uma verificação (usado como "último valor" e nas estatísticas). */
 export function reliableValue(findings: Finding[]): number | undefined {
   const vals = findings.filter(isReliablePrice).map((f) => f.value as number);
@@ -135,6 +147,8 @@ export function decideAlert(t: Tracker, findings: Finding[], ctx: DecisionContex
   }
   // loja que vende e onde a oferta foi achada (ex.: "Amazon · achado em ofertinha.com.br") e o cupom, se houver
   if (best.store || best.via) lines.push(`Loja: ${best.store ?? best.via}${best.via ? ` · achado em ${best.via}` : ''}`);
+  const pay = paymentLabel(best);
+  if (pay) lines.push(`Pagamento: ${pay}`);
   if (best.coupon) lines.push(`Cupom: ${best.coupon}`);
   if (best.storeUrl && best.storeUrl !== best.sourceUrl) lines.push(`Comprar: ${best.storeUrl}`);
   if (best.sourceUrl) lines.push(best.sourceUrl);

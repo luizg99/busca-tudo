@@ -109,6 +109,10 @@ a.link:hover { text-decoration: underline; }
 .metric span { display: block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
 .metric b { display: block; font-size: 16px; font-weight: 650; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .metric small { color: var(--muted); font-size: 12px; }
+button.metric { display: flex; flex-direction: column; justify-content: flex-start; align-items: stretch; font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; }
+button.metric:hover { border-color: var(--accent); background: var(--accent-soft); }
+.card.focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.focus-note { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--accent); }
 .tracker-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tracker-foot .sp { flex: 1; }
 .result { font-size: 13px; }

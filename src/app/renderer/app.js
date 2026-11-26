@@ -121,9 +121,19 @@ async function refreshStatus() {
 
 /* ======================= Acompanhamentos ======================= */
 
-function metric(label, value, sub) {
-  return h('div', { class: 'metric' }, h('span', {}, label), h('b', { title: typeof value === 'string' ? value : undefined }, value), sub ? h('small', {}, sub) : null);
+function metric(label, value, sub, onclick) {
+  const kids = [h('span', {}, label), h('b', { title: typeof value === 'string' ? value : undefined }, value), sub ? h('small', {}, sub) : null];
+  if (!onclick) return h('div', { class: 'metric' }, ...kids);
+  // clicável: abre o detalhe da consulta (botão de verdade, acessível por teclado)
+  return h('button', { class: 'metric clickable', type: 'button', title: 'Ver o detalhe desta consulta', onclick }, ...kids);
 }
+
+/** "à vista (Pix)" / "só parcelado (10x sem juros)"; vazio quando não se sabe (não inventa). */
+function payLabel(payment, note) {
+  if (payment !== 'vista' && payment !== 'parcelado') return '';
+  return `${payment === 'vista' ? 'à vista' : 'só parcelado'}${note ? ` (${note})` : ''}`;
+}
+const dot = (...parts) => parts.filter(Boolean).join(' · ');
 
 function nextCheck(t, last, overLimit) {
   if (t.status !== 'active') return { text: 'Pausado', sub: 'não será verificado' };
@@ -183,7 +193,7 @@ function trackerEditor(t, stats) {
 }
 
 function trackerCard(t, last, stats) {
-  const best = last?.findings?.filter((f) => f.found && f.value != null && f.confidence >= 0.6 && (!f.currency || f.currency === 'BRL')).sort((a, b) => a.value - b.value)[0];
+  const best = last?.findings?.filter((f) => f.found && !f.ignoredReason && f.value != null && f.confidence >= 0.6 && (!f.currency || f.currency === 'BRL')).sort((a, b) => a.value - b.value)[0];
   const nxt = nextCheck(t, last, lastStatus?.overLimit);
   const isNews = t.kind === 'news';
   const latestNews = last?.findings?.find((f) => f.found && f.title);
@@ -215,8 +225,8 @@ function trackerCard(t, last, stats) {
       isNews
         ? [metric('Última novidade', latestNews?.title || '—', last ? rel(Date.parse(last.at) - Date.now()) : 'nunca verificado'),
            metric('Novidades em 7 dias', String(stats?.alerts ?? 0), stats ? `${stats.checks} verificações` : '')]
-        : [metric('Última leitura', best ? money(best.value, best.currency) : '—', last ? rel(Date.parse(last.at) - Date.now()) : 'nunca verificado'),
-           metric('Menor em 7 dias', stats?.min != null ? money(stats.min) : '—', stats ? `${stats.checks} verificações` : '')],
+        : [metric('Última leitura', best ? money(best.value, best.currency) : '—', dot(best ? payLabel(best.payment, best.paymentNote) : '', last ? rel(Date.parse(last.at) - Date.now()) : 'nunca verificado'), last && best ? () => viewDetail(t, last.id) : undefined),
+           metric('Menor em 7 dias', stats?.min != null ? money(stats.min) : '—', stats ? dot(payLabel(stats.minPayment, stats.minPaymentNote), stats.minAt ? when(stats.minAt) : `${stats.checks} verificações`) : '', stats?.minCheckId ? () => viewDetail(t, stats.minCheckId) : undefined)],
       metric('Próxima consulta', nxt.text, nxt.sub),
       metric('Frequência', `${t.intervalMinutes} min`, `alerta: ${COND(t.alertCondition)}`)),
     last && !last.ok ? h('div', { class: 'alert' }, icon('alert'), h('span', {}, `Última verificação falhou: ${last.error}`)) : null,
@@ -250,9 +260,15 @@ async function viewTrackers() {
   return h('div', { class: 'page' }, head, h('div', { class: 'stack' }, cards));
 }
 
-async function viewDetail(t) {
+async function viewDetail(t, focusId) {
   stopPoll();
-  const [stats, checks, sources] = await Promise.all([api('GET', `/trackers/${t.id}/stats`), api('GET', `/trackers/${t.id}/checks?limit=50`), api('GET', `/trackers/${t.id}/sources`).catch(() => [])]);
+  const [stats, recent, sources] = await Promise.all([api('GET', `/trackers/${t.id}/stats`), api('GET', `/trackers/${t.id}/checks?limit=50`), api('GET', `/trackers/${t.id}/sources`).catch(() => [])]);
+  let checks = recent;
+  // a consulta pedida pode ser mais antiga que as 50 mostradas: busca ela e põe no topo
+  if (focusId && !recent.some((c) => c.id === focusId)) {
+    const one = await api('GET', `/trackers/${t.id}/checks/${focusId}`).catch(() => undefined);
+    if (one) checks = [one, ...recent];
+  }
   const sourceCards = sources.map((s) => h('div', { class: 'card' },
     h('div', { class: 'hist-head' }, h('strong', {}, s.label || hostOf(s.url)),
       s.status === 'ok' ? badge('lendo o preço', 'ok') : s.status === 'failing' ? badge(`falhando (${s.consecutiveFailures}x)`, 'bad') : badge('só pela busca completa', 'warn'),
@@ -260,7 +276,8 @@ async function viewDetail(t) {
       s.lastValue != null ? h('span', { class: 'muted small' }, `último: ${money(s.lastValue)}`) : null),
     h('div', { class: 'small' }, link(s.url)),
     s.lastError ? h('div', { class: s.status === 'ok' ? 'muted small' : 'alert', style: 'margin-top:8px' }, s.status === 'ok' ? null : icon('alert'), h('span', {}, s.lastError)) : null));
-  const hist = checks.map((c) => h('div', { class: 'card' },
+  const hist = checks.map((c) => h('div', { class: c.id === focusId ? 'card focus' : 'card', id: `check-${c.id}` },
+    c.id === focusId ? h('div', { class: 'focus-note' }, icon('tag'), h('span', {}, 'Consulta selecionada')) : null,
     h('div', { class: 'hist-head' }, h('strong', {}, when(c.at)), c.ok ? badge('ok', 'ok') : badge('falhou', 'bad'), c.mode ? badge(MODE[c.mode] || c.mode, c.mode === 'routine' ? 'ok' : 'accent') : null,
       h('span', { class: 'muted small' }, `${c.model} · US$ ${c.costUsd.toFixed(4)}`)),
     c.ok ? null : h('div', { class: 'alert', style: 'margin-top:8px' }, icon('alert'), h('span', {}, c.error)),
@@ -273,17 +290,19 @@ async function viewDetail(t) {
       h('div', { class: 'info' }, h('div', {}, f.found ? (f.title || f.evidence || '') : f.evidence), f.sourceUrl ? h('div', {}, link(f.sourceUrl)) : null,
         f.ignoredReason ? h('div', { class: 'warn small' }, `Ignorada: ${f.ignoredReason}`) : null,
         f.coupon ? h('div', { class: 'small' }, `Cupom: ${f.coupon}`) : null),
+      f.payment ? badge(payLabel(f.payment, f.paymentNote), f.payment === 'vista' ? 'ok' : 'warn') : null,
       f.ignoredReason ? badge('ignorada', 'warn') : f.via ? badge(`via ${f.via}${f.store ? ` · ${f.store}` : ''}`, 'accent') : null,
       f.found ? badge(`${Math.round(f.confidence * 100)}%`, f.confidence >= 0.6 ? 'ok' : 'warn') : null))));
   view.replaceChildren(h('div', { class: 'page' },
     h('div', { class: 'page-head' }, btn('Voltar', { kind: 'ghost', onclick: () => render() }, 'back'),
       h('div', { class: 'grow' }, h('h1', {}, t.name), h('div', { class: 'sub' }, `${t.goal} · alerta: ${COND(t.alertCondition)} · resumo ${DIGEST[t.digest]}`))),
     h('h2', { class: 'section' }, 'Últimos 7 dias'),
-    h('div', { class: 'stats' }, metric('Verificações', String(stats.checks), `${stats.failures} falha(s)`), metric('Menor', money(stats.min)), metric('Maior', money(stats.max)), metric('Média', money(stats.avg)), metric('Alertas', String(stats.alerts)), metric('Custo', `US$ ${stats.costUsd.toFixed(4)}`)),
+    h('div', { class: 'stats' }, metric('Verificações', String(stats.checks), `${stats.failures} falha(s)`), metric('Menor', money(stats.min), payLabel(stats.minPayment, stats.minPaymentNote), stats.minCheckId ? () => viewDetail(t, stats.minCheckId) : undefined), metric('Maior', money(stats.max)), metric('Média', money(stats.avg)), metric('Alertas', String(stats.alerts)), metric('Custo', `US$ ${stats.costUsd.toFixed(4)}`)),
     h('h2', { class: 'section' }, 'Fontes de preço'),
     h('div', { class: 'history' }, sourceCards.length ? sourceCards : h('p', { class: 'muted' }, 'Ainda não há fontes: elas são descobertas na primeira busca completa.')),
     h('h2', { class: 'section' }, 'Histórico de verificações'),
     h('div', { class: 'history' }, hist.length ? hist : h('p', { class: 'muted' }, 'Ainda não houve verificações.'))));
+  if (focusId) document.getElementById(`check-${focusId}`)?.scrollIntoView({ block: 'center' });
 }
 
 /* ======================= Chat de cadastro ======================= */

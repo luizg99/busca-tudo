@@ -94,6 +94,19 @@ describe('pipeline: limite de conferências, paralelo e cupom na rotina', () => 
     return { db, t, sent, pages, advance: (min: number) => { clock += min * 60000; }, deps: { db, llm, notifier, models, now, fetchPage, resolveFinalUrl } };
   }
 
+  it('fonte antiga de site desconhecido (aprendida antes da lista) não deixa a rotina muda: refaz a busca', async () => {
+    const item = { found: true, value: 3600, currency: 'BRL', title: 'Amazon', source_url: AMZ, evidence: 'e', confidence: 0.9, price_regex: REGEX };
+    const s = setup([item], { [AMZ]: html('3600,00') });
+    s.db.upsertSource(s.t.id, { url: 'https://seletronic.com.br/ps5', label: 'Seletronic', status: 'ok', lastValue: 3905, rule: { type: 'regex', pattern: REGEX } });
+    s.db.addCheck({ trackerId: s.t.id, at: '2026-01-10T09:00:00.000Z', ok: true, findings: [], model: 'm', costUsd: 0, mode: 'discovery', sources: [] });
+    s.advance(10); // descoberta feita há pouco: antes do conserto a rotina registrava leitura vazia sem buscar
+    const r = await runCheck(s.deps, s.t.id);
+    expect(r.ok).toBe(true);
+    const last = s.db.listChecks(s.t.id)[0];
+    expect(last.mode).toBe('discovery');
+    expect(last.findings.some((x) => x.sourceUrl === AMZ)).toBe(true);
+  });
+
   it('#3 achados de loja confiável não gastam o limite de conferências: o 10º, o mais barato, ainda vale', async () => {
     const items = Array.from({ length: 10 }, (_, i) => ({ found: true, value: 4000 - i * 10, currency: 'BRL', title: `Amazon ${i}`, source_url: `https://www.amazon.com.br/dp/${i}`, evidence: 'e', confidence: 0.9 }));
     const s = setup(items);

@@ -175,8 +175,9 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
 
   // Preços: depois da descoberta, a rotina lê as fontes conhecidas (plano A = código, plano B = IA com trecho).
   if (tracker.kind === 'price') {
-    const known = db.listSources(trackerId);
-    const readable = known.filter((s) => s.status !== 'unreadable' && trustedOk(s)); // fonte de loja desconhecida não é lida
+    // fonte de loja desconhecida (ex.: aprendida antes da lista de confiáveis) não conta: sem fontes válidas, a busca completa refaz
+    const known = db.listSources(trackerId).filter(trustedOk);
+    const readable = known.filter((s) => s.status !== 'unreadable');
     const lastDiscovery = db.lastDiscoveryAt(trackerId);
     const discoveryDue = (!lastDiscovery || hoursSince(lastDiscovery) >= DISCOVERY_EVERY_HOURS) && !searchCoolingDown;
     let anySuspect = false;
@@ -202,7 +203,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
         if (result.ok && result.value !== undefined) {
           findings.push({
             found: true, value: result.value, currency: 'BRL', title: s.label, sourceUrl: s.url,
-            ...(s.origin ? { via: s.origin.via, store: s.origin.store, storeUrl: s.origin.storeUrl, coupon: s.origin.coupon } : {}),
+            ...(s.origin ? { via: s.origin.via, store: s.origin.store, storeUrl: s.origin.storeUrl, coupon: s.origin.coupon, payment: s.origin.payment, paymentNote: s.origin.paymentNote } : {}),
             evidence: `Lido da página por ${result.method === 'ai' ? 'IA (trecho)' : 'código'}.`, confidence: result.method === 'ai' ? 0.75 : 0.95,
           });
         }

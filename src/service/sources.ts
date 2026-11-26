@@ -275,7 +275,7 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
     const value = f.value as number;
     const label = f.title;
     // loja, link da loja e cupom ficam com a fonte: a rotina por código os mostra nos alertas seguintes (null apaga o antigo)
-    const origin = f.via || f.store || f.coupon || f.storeUrl ? { store: f.store, storeUrl: f.storeUrl, coupon: f.coupon, via: f.via } : null;
+    const origin = f.via || f.store || f.coupon || f.storeUrl || f.payment ? { store: f.store, storeUrl: f.storeUrl, coupon: f.coupon, via: f.via, payment: f.payment, paymentNote: f.paymentNote } : null;
     // Uma fonte que já funcionava não é rebaixada por uma falha pontual: quem decide isso é a rotina (falhas seguidas).
     const known = deps.db.listSources(tracker.id).find((s) => s.url === url);
     const alreadyUsable = known !== undefined && known.status !== 'unreadable';
