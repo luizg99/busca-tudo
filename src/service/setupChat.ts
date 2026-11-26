@@ -34,6 +34,7 @@ export const CREATE_TRACKER_TOOL: ToolDef = {
         required: ['type'],
       },
       digest: { type: 'string', enum: ['none', 'daily', 'weekly'] },
+      onlyTrusted: { type: 'boolean', description: 'true (padrão): só vale oferta de lojas confiáveis; false: qualquer loja. Só mude se o usuário pedir.' },
     },
     required: ['name', 'kind', 'goal', 'intervalMinutes', 'alertCondition'],
   },
@@ -51,6 +52,7 @@ function toNewTracker(input: any): NewTracker {
     intervalMinutes: Number(input?.intervalMinutes),
     alertCondition: input?.alertCondition,
     digest: input?.digest ?? 'none',
+    onlyTrusted: input?.onlyTrusted !== false, // padrão: só lojas confiáveis
   };
 }
 

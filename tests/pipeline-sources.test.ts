@@ -12,6 +12,7 @@ const models = { routine: HAIKU, escalate: 'claude-sonnet-5-5' };
 const priceTracker: NewTracker = {
   name: 'PS5 Slim Digital', kind: 'price', goal: 'Preço do PS5 Slim digital novo', include: ['PS5 Slim Digital'], exclude: ['usado'],
   intervalMinutes: 60, alertCondition: { type: 'below_last' }, digest: 'daily',
+  onlyTrusted: false, // estes testes usam lojas de mentira; a lista de confiáveis é testada em trusted.test.ts
 };
 const REGEX = 'Digital.{0,30}?R\\$\\s*([\\d.,]+)\\s*no pix';
 const page = (price: string) => `<html><body><h1>Console PS5 Slim Digital</h1><p>Por R$ ${price} no pix</p></body></html>`;

@@ -43,9 +43,9 @@ describe('SetupSession', () => {
     const { llm } = fake([tool(goodInput), text('Confira o resumo abaixo.')]);
     const s = new SetupSession(llm, 'claude-sonnet-5-5');
     const r = await s.send('pode criar');
-    expect(r.proposal).toEqual(goodInput);
+    expect(r.proposal).toEqual({ ...goodInput, onlyTrusted: true }) // padrão: só lojas confiáveis;
     expect(r.reply).toBe('Confira o resumo abaixo.');
-    expect(s.pending).toEqual(goodInput);
+    expect(s.pending).toEqual({ ...goodInput, onlyTrusted: true }) // padrão: só lojas confiáveis;
   });
 
   it('create_tracker inválido devolve o erro ao modelo e não vira proposta', async () => {

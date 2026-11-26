@@ -82,8 +82,9 @@ export function isLoopbackAddress(addr: string): boolean {
   return g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff && g[6] >> 8 === 127; // ::ffff:127.x.x.x
 }
 
-const internal = (): FetchResult => ({ ok: false, kind: 'invalid', message: 'Endereço interno bloqueado (só sites públicos são acessados).' });
-const invalid = (message = 'Endereço inválido (só http/https).'): FetchResult => ({ ok: false, kind: 'invalid', message });
+type FailedFetch = Extract<FetchResult, { ok: false }>;
+const internal = (): FailedFetch => ({ ok: false, kind: 'invalid', message: 'Endereço interno bloqueado (só sites públicos são acessados).' });
+const invalid = (message = 'Endereço inválido (só http/https).'): FailedFetch => ({ ok: false, kind: 'invalid', message });
 
 /** Decodifica pelos bytes usando o charset do cabeçalho, do <meta> ou UTF-8 (lojas brasileiras ainda usam ISO-8859-1). */
 function decodeBody(bytes: Uint8Array, contentType: string | undefined): string {
@@ -139,6 +140,23 @@ function readBody(stream: Readable, source: http.IncomingMessage, maxBytes: numb
  * é usado para conectar, sem janela para DNS rebinding), inclusive em cada redirecionamento.
  */
 export async function fetchPage(url: string, opts: FetchOptions = {}): Promise<FetchResult> {
+  const r = await fetchCore(url, opts, true);
+  return r.ok ? { ok: true, html: r.html } : r;
+}
+
+/**
+ * Segue os redirecionamentos de um link (inclusive links de saída de afiliados) e devolve o endereço final, sem baixar a
+ * página. Usa o mesmo baixador seguro (endereços internos bloqueados em cada salto). Qualquer resposta final conta, mesmo
+ * erro 403/404: o que interessa é para onde o link leva.
+ */
+export async function resolveFinalUrl(url: string, opts: FetchOptions = {}): Promise<{ ok: true; finalUrl: string } | { ok: false; message: string }> {
+  const r = await fetchCore(url, opts, false);
+  return r.ok ? { ok: true, finalUrl: r.finalUrl } : { ok: false, message: r.message };
+}
+
+type CoreResult = { ok: true; html: string; finalUrl: string } | Extract<FetchResult, { ok: false }>;
+
+async function fetchCore(url: string, opts: FetchOptions, wantBody: boolean): Promise<CoreResult> {
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const maxBytes = opts.maxBytes ?? 1_500_000;
   const allowedHosts = new Set((opts.allowedHosts ?? []).map((h) => h.toLowerCase()));
@@ -194,6 +212,10 @@ export async function fetchPage(url: string, opts: FetchOptions = {}): Promise<F
         try { current = new URL(location, current); } catch { return invalid('Redirecionamento para um endereço inválido.'); }
         continue;
       }
+      if (!wantBody) {
+        res.resume();
+        return { ok: true, html: '', finalUrl: current.toString() }; // só interessa onde o link termina
+      }
       if (status === 403 || status === 429) {
         res.resume();
         return { ok: false, kind: 'blocked', status, message: `O site bloqueou o acesso automático (HTTP ${status}).` };
@@ -212,7 +234,7 @@ export async function fetchPage(url: string, opts: FetchOptions = {}): Promise<F
       if (decompressor) pipeline(res, decompressor, (err) => { if (err) decompressor.destroy(err); });
       const stream: Readable = decompressor ?? res;
       const body = await readBody(stream, res, maxBytes);
-      return { ok: true, html: decodeBody(body, res.headers['content-type']) };
+      return { ok: true, html: decodeBody(body, res.headers['content-type']), finalUrl: current.toString() };
     }
     return { ok: false, kind: 'http', message: 'O site fez redirecionamentos demais.' };
   } catch (e) {

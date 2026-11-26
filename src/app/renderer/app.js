@@ -145,6 +145,7 @@ function trackerEditor(t, stats) {
   const cond = h('select', {}, condOptions.map(([v, l]) => h('option', { value: v, selected: v === t.alertCondition.type }, l)));
   const limit = h('input', { type: 'number', min: '0', step: '0.01', value: t.alertCondition.type === 'below_value' ? t.alertCondition.value : '', placeholder: 'ex.: 3500' });
   const limitField = field('Valor (R$)', limit);
+  const trustedToggle = h('input', { type: 'checkbox', checked: t.onlyTrusted !== false });
   const digest = h('select', {}, [['none', 'Sem resumo'], ['daily', 'Resumo diário'], ['weekly', 'Resumo semanal']].map(([v, l]) => h('option', { value: v, selected: v === t.digest }, l)));
   const estimate = h('div', { class: 'muted small' });
   const perCheck = stats && stats.checks ? stats.costUsd / stats.checks : 0.034;
@@ -164,7 +165,7 @@ function trackerEditor(t, stats) {
       alertCondition = { type: 'below_value', value: Number(limit.value) };
     }
     try {
-      await api('PATCH', `/trackers/${t.id}`, { name: name.value.trim(), goal: goal.value.trim(), intervalMinutes: Number(freq.value), alertCondition, digest: digest.value });
+      await api('PATCH', `/trackers/${t.id}`, { name: name.value.trim(), goal: goal.value.trim(), intervalMinutes: Number(freq.value), alertCondition, digest: digest.value, onlyTrusted: trustedToggle.checked });
       toast('Acompanhamento atualizado.');
       close();
     } catch (e) { toast(e.message, 'bad'); }
@@ -176,6 +177,7 @@ function trackerEditor(t, stats) {
     field('Objetivo (o que a IA deve procurar)', goal),
     h('div', { class: 'grid2' }, field('Avisar quando', cond), limitField),
     field('Resumo', digest),
+    t.kind === 'price' ? toggle('Só lojas confiáveis', 'Vale a loja que vende: sites desconhecidos só entram se levarem a uma loja da sua lista (Configurações).', trustedToggle) : null,
     estimate,
     h('div', { class: 'tracker-foot' }, save, btn('Cancelar', { kind: 'ghost', sm: true, onclick: close })));
 }
@@ -207,7 +209,7 @@ function trackerCard(t, last, stats) {
     h('div', { class: 'tracker-head' },
       h('div', { class: 'kind' }, icon(t.kind === 'news' ? 'news' : t.kind === 'price' ? 'tag' : 'search')),
       h('div', { class: 'grow' },
-        h('div', { class: 'tracker-title' }, t.name, badge(KIND[t.kind], 'accent'), t.status === 'paused' ? badge('Pausado', 'warn') : null),
+        h('div', { class: 'tracker-title' }, t.name, badge(KIND[t.kind], 'accent'), t.status === 'paused' ? badge('Pausado', 'warn') : null, t.kind === 'price' && t.onlyTrusted !== false ? badge('Lojas confiáveis', 'ok') : null),
         h('div', { class: 'tracker-goal' }, t.goal))),
     h('div', { class: 'metrics' },
       isNews
@@ -268,7 +270,10 @@ async function viewDetail(t) {
       badge(r.ok ? 'fonte' : 'falhou', r.ok ? 'ok' : 'bad'))),
     c.findings.map((f) => h('div', { class: 'finding' },
       h('span', { class: 'val' }, f.found ? (f.value != null ? money(f.value, f.currency) : '—') : 'nada'),
-      h('div', { class: 'info' }, h('div', {}, f.found ? (f.title || f.evidence || '') : f.evidence), f.sourceUrl ? h('div', {}, link(f.sourceUrl)) : null),
+      h('div', { class: 'info' }, h('div', {}, f.found ? (f.title || f.evidence || '') : f.evidence), f.sourceUrl ? h('div', {}, link(f.sourceUrl)) : null,
+        f.ignoredReason ? h('div', { class: 'warn small' }, `Ignorada: ${f.ignoredReason}`) : null,
+        f.coupon ? h('div', { class: 'small' }, `Cupom: ${f.coupon}`) : null),
+      f.ignoredReason ? badge('ignorada', 'warn') : f.via ? badge(`via ${f.via}${f.store ? ` · ${f.store}` : ''}`, 'accent') : null,
       f.found ? badge(`${Math.round(f.confidence * 100)}%`, f.confidence >= 0.6 ? 'ok' : 'warn') : null))));
   view.replaceChildren(h('div', { class: 'page' },
     h('div', { class: 'page-head' }, btn('Voltar', { kind: 'ghost', onclick: () => render() }, 'back'),
@@ -343,7 +348,7 @@ function proposalCard(p) {
   return h('div', { class: 'card proposal' },
     h('h3', {}, icon('check'), 'Confira antes de salvar'),
     h('dl', { class: 'defs' }, def('Nome', p.name), def('Tipo', KIND[p.kind]), def('Objetivo', p.goal), def('Considerar', p.include.join('; ') || '—'), def('Ignorar', p.exclude.join('; ') || '—'),
-      def('Verificar a cada', `${p.intervalMinutes} min`), def('Alertar quando', COND(p.alertCondition)), def('Resumo', DIGEST[p.digest])),
+      def('Verificar a cada', `${p.intervalMinutes} min`), def('Alertar quando', COND(p.alertCondition)), def('Resumo', DIGEST[p.digest]), p.kind === 'price' ? def('Lojas', p.onlyTrusted === false ? 'qualquer loja' : 'só lojas confiáveis') : null),
     h('div', { class: 'row' },
       btn('Confirmar e salvar', { kind: 'primary', onclick: async () => { try { await api('POST', `/setup/${chatState.id}/confirm`); chatState = undefined; toast('Acompanhamento criado!'); setView('trackers'); } catch (e) { toast(e.message, 'bad'); } } }, 'check'),
       h('span', { class: 'muted small' }, 'Para ajustar, escreva o que quer mudar.')));
@@ -383,6 +388,8 @@ async function viewSettings() {
   const day = h('input', { type: 'number', min: '0', step: '0.1', value: s.limitDayUsd ?? '', placeholder: 'sem limite' });
   const month = h('input', { type: 'number', min: '0', step: '0.5', value: s.limitMonthUsd ?? '', placeholder: 'sem limite' });
   const alertNumber = h('input', { type: 'text', value: s.alertNumber ?? '', placeholder: 'vazio = o próprio número conectado', inputmode: 'tel', 'aria-label': 'Número que recebe os avisos' });
+  const trusted = h('textarea', { rows: 8, placeholder: 'amazon.com.br (um por linha)', 'aria-label': 'Sites confiáveis' });
+  trusted.value = (s.trustedSites || []).join('\n');
   const wa = h('input', { type: 'checkbox', checked: s.sendReportsToWhatsApp });
   const boot = h('input', { type: 'checkbox', checked: startup });
 
@@ -399,7 +406,7 @@ async function viewSettings() {
 
   const save = btn('Salvar alterações', { kind: 'primary', onclick: async () => {
     try {
-      const body = { models: { setup: mSetup.value, routine: mRoutine.value, escalate: mEsc.value }, limitDayUsd: day.value === '' ? null : Number(day.value), limitMonthUsd: month.value === '' ? null : Number(month.value), sendReportsToWhatsApp: wa.checked, alertNumber: alertNumber.value.trim() === '' ? null : alertNumber.value.trim() };
+      const body = { models: { setup: mSetup.value, routine: mRoutine.value, escalate: mEsc.value }, limitDayUsd: day.value === '' ? null : Number(day.value), limitMonthUsd: month.value === '' ? null : Number(month.value), sendReportsToWhatsApp: wa.checked, trustedSites: trusted.value.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean), alertNumber: alertNumber.value.trim() === '' ? null : alertNumber.value.trim() };
       if (key.value.trim()) body.anthropicApiKey = key.value.trim();
       await api('PUT', '/settings', body);
       key.value = '';
@@ -414,6 +421,8 @@ async function viewSettings() {
       section('Inteligência artificial', 'A chave fica criptografada neste computador e nunca é exibida.', badge(s.hasApiKey ? 'Chave configurada' : 'Sem chave', s.hasApiKey ? 'ok' : 'bad'),
         field('Chave de API da Anthropic', key),
         h('div', { class: 'grid3', style: 'margin-top:14px' }, field('Conversa de cadastro', mSetup, 'modelo'), field('Verificações', mRoutine, 'modelo barato'), field('Reforço', mEsc, 'baixa confiança'))),
+      section('Sites confiáveis', 'Os acompanhamentos de preço só valem ofertas dessas lojas. Sites desconhecidos (blogs, cupons) também entram, desde que o link deles leve a uma loja da lista.', badge(`${(s.trustedSites || []).length} lojas`, 'accent'),
+        field('Um domínio por linha', trusted, 'Subdomínios contam (www.amazon.com.br = amazon.com.br). Lista vazia = sem restrição.')),
       section('Limites de custo', 'As verificações pausam sozinhas quando o limite é atingido.', null,
         h('div', { class: 'grid2' }, field('Limite diário (US$)', day), field('Limite mensal (US$)', month))),
       section('Avisos', 'Para o celular notificar, envie para outro número: mensagens que você manda para si mesmo costumam chegar sem som.', null,

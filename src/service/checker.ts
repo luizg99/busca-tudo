@@ -25,13 +25,25 @@ Método:
 2. Cruze pelo menos 2 fontes sempre que possível e prefira fontes confiáveis.
 3. Descarte resultados que violem os critérios (outro modelo, usado, anúncio suspeito, preço implausível).
 4. Responda apenas com JSON no formato:
-{"findings":[{"found":true|false,"value":<número, sem símbolo de moeda>,"currency":"BRL","title":"...","source_url":"https://...","evidence":"por que este resultado vale","confidence":<0 a 1>,"price_regex":"..."}]}
+{"findings":[{"found":true|false,"value":<número, sem símbolo de moeda>,"currency":"BRL","title":"...","source_url":"https://...","evidence":"por que este resultado vale","confidence":<0 a 1>,"price_regex":"...","store":"loja que vende","store_url":"https://...","coupon":"cupom e condições"}]}
 Se nada relevante for encontrado, responda {"findings":[{"found":false,"evidence":"o que foi procurado","confidence":0.9}]}.
 "price_regex" é uma expressão regular (sintaxe JavaScript, sem barras, case-insensitive) com UM grupo de captura, aplicada ao TEXTO visível da página (sem HTML), que captura o preço do produto exatamente como escrito na página, ancorada no nome do produto ou em palavras próximas (ex.: "Digital.{0,40}?R\\$\\s*([\\d.,]+)\\s*no pix"). Lembre de escapar as barras invertidas no JSON. Use null se não tiver certeza.
+"store" é a LOJA que vende o produto (pode ser diferente do site onde você viu a oferta, por exemplo um blog de cupons). "store_url" é o link final da loja para esse produto (ou o link de saída do site, se for um agregador). "coupon" só se a oferta depender de cupom: código e condições (ex.: "PROMOAGORA, pagamento no Pix"). Omita os campos que não se aplicam.
 "confidence" reflete o quanto você tem certeza de que o resultado atende ao objetivo e aos critérios.`;
 
-function buildPrompt(t: Tracker): string {
+/** Instruções para buscar em lojas confiáveis sem ignorar sites desconhecidos que trazem cupom de loja confiável. */
+function trustedBlock(sites: string[]): string {
+  return [
+    `Lojas confiáveis (prioridade): ${sites.join(', ')}.`,
+    'Priorize preços dessas lojas. NÃO ignore sites desconhecidos (blogs, agregadores de ofertas e cupons) quando a oferta deles for de uma loja confiável: ' +
+      'nesse caso informe em "store" o nome da loja, em "store_url" o link final da loja (ou o link de saída do site) e em "coupon" o cupom e as condições. ' +
+      'Não informe ofertas de lojas fora da lista, a menos que a oferta seja claramente de uma loja confiável.',
+  ].join('\n');
+}
+
+function buildPrompt(t: Tracker, trustedSites: string[] = []): string {
   const lines = [`Acompanhamento: ${t.name}`, `Tipo: ${t.kind}`, `Objetivo: ${t.goal}`];
+  if (t.kind === 'price' && t.onlyTrusted && trustedSites.length > 0) lines.push(trustedBlock(trustedSites));
   if (t.include.length) lines.push(`Deve incluir/considerar: ${t.include.join('; ')}`);
   if (t.exclude.length) lines.push(`Deve excluir/ignorar: ${t.exclude.join('; ')}`);
   lines.push(
@@ -66,15 +78,18 @@ function normalize(raw: any): Finding {
     ...(typeof raw.title === 'string' ? { title: raw.title } : {}),
     ...(typeof raw.source_url === 'string' ? { sourceUrl: raw.source_url } : {}),
     ...(typeof raw.price_regex === 'string' && raw.price_regex.length > 0 && raw.price_regex.length <= 400 ? { priceRegex: raw.price_regex } : {}),
+    ...(typeof raw.store === 'string' && raw.store.trim() ? { store: raw.store.trim().slice(0, 120) } : {}),
+    ...(typeof raw.store_url === 'string' && /^https?:\/\//i.test(raw.store_url) ? { storeUrl: raw.store_url } : {}),
+    ...(typeof raw.coupon === 'string' && raw.coupon.trim() ? { coupon: raw.coupon.trim().slice(0, 200) } : {}),
     evidence: typeof raw.evidence === 'string' ? raw.evidence : '',
     confidence,
   };
 }
 
-async function once(llm: LlmClient, t: Tracker, model: string): Promise<{ findings: Finding[]; usage: Usage }> {
+async function once(llm: LlmClient, t: Tracker, model: string, trustedSites: string[]): Promise<{ findings: Finding[]; usage: Usage }> {
   let res;
   try {
-    res = await llm.search({ model, system: SYSTEM, prompt: buildPrompt(t) });
+    res = await llm.search({ model, system: SYSTEM, prompt: buildPrompt(t, trustedSites) });
   } catch (e) {
     throw new CheckError(`Falha ao consultar a IA: ${(e as Error).message}`);
   }
@@ -96,12 +111,14 @@ export async function runSmartCheck(
   llm: LlmClient,
   t: Tracker,
   models: { routine: string; escalate: string },
+  opts: { trustedSites?: string[] } = {},
 ): Promise<CheckOutcome> {
-  const first = await once(llm, t, models.routine);
+  const trusted = opts.trustedSites ?? [];
+  const first = await once(llm, t, models.routine, trusted);
   if (!lowConfidence(first.findings)) return { findings: first.findings, usages: [first.usage], escalated: false };
   let second;
   try {
-    second = await once(llm, t, models.escalate);
+    second = await once(llm, t, models.escalate, trusted);
   } catch (e) {
     throw new CheckError((e as Error).message, [first.usage, ...((e as CheckError).usages ?? [])]);
   }

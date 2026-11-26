@@ -33,9 +33,12 @@ export interface SourceRow {
   lastNotifiedAt?: string;
   /** Quando começou a sequência atual de falhas. */
   failingSince?: string;
+  /** Fonte de site desconhecido cujo link de saída foi conferido e leva a uma loja confiável. */
+  trustedVia?: boolean;
   createdAt: string;
 }
 export interface SourceInput {
+  trustedVia?: boolean;
   url: string;
   label?: string;
   rule?: PriceRule;
@@ -69,7 +72,7 @@ CREATE TABLE IF NOT EXISTS trackers (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, kind TEXT NOT NULL, goal TEXT NOT NULL,
   include_json TEXT NOT NULL, exclude_json TEXT NOT NULL, interval_minutes INTEGER NOT NULL,
   alert_condition_json TEXT NOT NULL, digest TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL, only_trusted INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,6 +122,8 @@ export function openDb(path: string) {
   ensureColumn('checks', 'sources_json', 'TEXT');
   ensureColumn('checks', 'mode', 'TEXT');
   ensureColumn('sources', 'failing_since', 'TEXT');
+  ensureColumn('sources', 'trusted_via', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('trackers', 'only_trusted', 'INTEGER NOT NULL DEFAULT 1');
 
   const toTracker = (r: any): Tracker => ({
     id: r.id,
@@ -132,6 +137,7 @@ export function openDb(path: string) {
     digest: r.digest,
     status: r.status,
     createdAt: r.created_at,
+    onlyTrusted: r.only_trusted !== 0,
   });
   const toCheck = (r: any): CheckRow => ({
     id: r.id,
@@ -160,6 +166,7 @@ export function openDb(path: string) {
     consecutiveFailures: r.consecutive_failures,
     lastNotifiedAt: r.last_notified_at ?? undefined,
     failingSince: r.failing_since ?? undefined,
+    trustedVia: !!r.trusted_via,
     createdAt: r.created_at,
   });
   const toAlert = (r: any): AlertRow => ({
@@ -177,12 +184,12 @@ export function openDb(path: string) {
     createTracker(t: NewTracker): Tracker {
       const info = raw
         .prepare(
-          `INSERT INTO trackers (name, kind, goal, include_json, exclude_json, interval_minutes, alert_condition_json, digest, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO trackers (name, kind, goal, include_json, exclude_json, interval_minutes, alert_condition_json, digest, created_at, only_trusted)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           t.name, t.kind, t.goal, JSON.stringify(t.include), JSON.stringify(t.exclude),
-          t.intervalMinutes, JSON.stringify(t.alertCondition), t.digest, new Date().toISOString(),
+          t.intervalMinutes, JSON.stringify(t.alertCondition), t.digest, new Date().toISOString(), t.onlyTrusted === false ? 0 : 1,
         );
       return api.getTracker(Number(info.lastInsertRowid))!;
     },
@@ -200,11 +207,11 @@ export function openDb(path: string) {
       raw
         .prepare(
           `UPDATE trackers SET name=?, kind=?, goal=?, include_json=?, exclude_json=?, interval_minutes=?,
-           alert_condition_json=?, digest=?, status=? WHERE id=?`,
+           alert_condition_json=?, digest=?, status=?, only_trusted=? WHERE id=?`,
         )
         .run(
           n.name, n.kind, n.goal, JSON.stringify(n.include), JSON.stringify(n.exclude),
-          n.intervalMinutes, JSON.stringify(n.alertCondition), n.digest, n.status, id,
+          n.intervalMinutes, JSON.stringify(n.alertCondition), n.digest, n.status, n.onlyTrusted === false ? 0 : 1, id,
         );
       return api.getTracker(id)!;
     },
@@ -295,16 +302,17 @@ export function openDb(path: string) {
       const existing = raw.prepare('SELECT * FROM sources WHERE tracker_id = ? AND url = ?').get(trackerId, s.url) as any;
       if (existing) {
         raw
-          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ?, failing_since = ?, last_notified_at = ? WHERE id = ?')
+          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ?, failing_since = ?, last_notified_at = ?, trusted_via = ? WHERE id = ?')
           .run(s.label ?? existing.label, s.rule ? JSON.stringify(s.rule) : existing.rule_json, s.status,
             s.lastValue ?? existing.last_value, s.status === 'ok' ? null : s.lastError ?? existing.last_error,
             s.status === 'ok' ? 0 : existing.consecutive_failures, s.status === 'ok' ? null : existing.failing_since,
-            s.status === 'ok' ? null : existing.last_notified_at, existing.id); // voltou a funcionar: um problema futuro é um episódio novo
+            s.status === 'ok' ? null : existing.last_notified_at, // voltou a funcionar: um problema futuro é um episódio novo
+            s.trustedVia === undefined ? existing.trusted_via : s.trustedVia ? 1 : 0, existing.id);
         return api.getSource(existing.id)!;
       }
       const info = raw
-        .prepare('INSERT INTO sources (tracker_id, url, label, rule_json, status, last_value, last_error, created_at) VALUES (?,?,?,?,?,?,?,?)')
-        .run(trackerId, s.url, s.label ?? null, s.rule ? JSON.stringify(s.rule) : null, s.status, s.lastValue ?? null, s.lastError ?? null, new Date().toISOString());
+        .prepare('INSERT INTO sources (tracker_id, url, label, rule_json, status, last_value, last_error, created_at, trusted_via) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(trackerId, s.url, s.label ?? null, s.rule ? JSON.stringify(s.rule) : null, s.status, s.lastValue ?? null, s.lastError ?? null, new Date().toISOString(), s.trustedVia ? 1 : 0);
       return api.getSource(Number(info.lastInsertRowid))!;
     },
     getSource(id: number): SourceRow | undefined {

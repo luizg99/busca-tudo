@@ -17,9 +17,11 @@ export interface Tracker {
   digest: 'none' | 'daily' | 'weekly';
   status: 'active' | 'paused';
   createdAt: string;
+  /** Só vale oferta de loja confiável (lista em Configurações); site desconhecido só entra se levar a uma loja confiável. */
+  onlyTrusted: boolean;
 }
 
-export type NewTracker = Omit<Tracker, 'id' | 'status' | 'createdAt'>;
+export type NewTracker = Omit<Tracker, 'id' | 'status' | 'createdAt' | 'onlyTrusted'> & { onlyTrusted?: boolean };
 
 export interface Finding {
   found: boolean;
@@ -32,6 +34,16 @@ export interface Finding {
   confidence: number;
   /** Regex (1 grupo de captura) que lê este preço no texto da página; sugerida pela IA na descoberta. */
   priceRegex?: string;
+  /** Loja que vende (pode diferir do site onde a oferta foi vista, ex.: blog de cupom). */
+  store?: string;
+  /** Link final da loja (ou link de saída do site) para conferir que leva a uma loja confiável. */
+  storeUrl?: string;
+  /** Cupom e condições, se a oferta depender de um. */
+  coupon?: string;
+  /** Preenchido pelo app: domínio do site desconhecido por onde uma loja confiável foi encontrada. */
+  via?: string;
+  /** Preenchido pelo app: motivo de a oferta ter sido ignorada (loja desconhecida). */
+  ignoredReason?: string;
 }
 
 /** Como ler o preço de uma página sem IA: regex com 1 grupo de captura sobre o texto visível, ou dados estruturados. */

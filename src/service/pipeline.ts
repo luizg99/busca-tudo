@@ -3,10 +3,34 @@ import { CheckError, runSmartCheck } from './checker';
 import { estimateCostUsd, type Usage } from './cost';
 import type { Db, SourceRow } from './db';
 import { decideAlert } from './decide';
-import { fetchPage as defaultFetchPage, type FetchResult } from './fetcher';
+import { fetchPage as defaultFetchPage, resolveFinalUrl as defaultResolveFinalUrl, type FetchResult } from './fetcher';
 import type { LlmClient } from './llm';
 import type { Notifier } from './notifier';
 import { learnSources, readSource } from './sources';
+import { classifyFinding, getTrustedSites, isTrustedUrl, type ResolveFinalUrl } from './trust';
+
+/** Ofertas conferidas (com seguimento de link) por busca completa. */
+const MAX_TRUST_CHECKS = 8;
+
+/**
+ * Aplica a lista de lojas confiáveis às ofertas da busca: ofertas de loja desconhecida ficam marcadas como ignoradas
+ * (com o motivo) e continuam no histórico; ofertas achadas num site desconhecido, mas de loja confiável, ganham `via`.
+ */
+async function applyTrust(findings: Finding[], trusted: string[], resolve: ResolveFinalUrl): Promise<Finding[]> {
+  let checked = 0;
+  const out: Finding[] = [];
+  for (const f of findings) {
+    if (!f.found || typeof f.value !== 'number' || f.ignoredReason) { out.push(f); continue; }
+    if (checked++ >= MAX_TRUST_CHECKS) { out.push({ ...f, ignoredReason: 'Limite de ofertas conferidas por verificação atingido.' }); continue; }
+    try {
+      const v = await classifyFinding(f, trusted, resolve);
+      out.push(v.verdict === 'ignored' ? { ...f, ignoredReason: v.reason } : v.verdict === 'via_trusted' ? { ...f, via: v.via } : f);
+    } catch (e) {
+      out.push({ ...f, ignoredReason: `Não consegui conferir a loja: ${(e as Error).message}` });
+    }
+  }
+  return out;
+}
 
 export interface PipelineDeps {
   db: Db;
@@ -16,6 +40,8 @@ export interface PipelineDeps {
   now: () => Date;
   /** Baixa páginas (injetável nos testes). */
   fetchPage?: (url: string) => Promise<FetchResult>;
+  /** Segue o link de saída de um site desconhecido para conferir a loja (injetável nos testes). */
+  resolveFinalUrl?: ResolveFinalUrl;
 }
 
 export interface CheckResultSummary {
@@ -110,6 +136,10 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
 
   const at = now().toISOString();
   const lastValue = db.lastValue(trackerId);
+  // "Só lojas confiáveis": vale a loja que vende. Lista vazia = sem restrição. Só para preços.
+  const trustedSites = tracker.kind === 'price' && tracker.onlyTrusted ? getTrustedSites(db) : [];
+  const filterByTrust = trustedSites.length > 0;
+  const trustedOk = (s: SourceRow) => !filterByTrust || isTrustedUrl(s.url, trustedSites) || !!s.trustedVia;
   const usages: Usage[] = [];
   let findings: Finding[] = [];
   let sourceResults: SourceResult[] = [];
@@ -121,7 +151,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
   const baseline = (() => {
     if (tracker.kind !== 'price') return lastValue;
     const vals = db.listSources(trackerId)
-      .filter((s) => s.status !== 'unreadable' && s.lastValue !== undefined && (!s.lastOkAt || hoursSince(s.lastOkAt) < BASELINE_STALE_HOURS))
+      .filter((s) => s.status !== 'unreadable' && trustedOk(s) && s.lastValue !== undefined && (!s.lastOkAt || hoursSince(s.lastOkAt) < BASELINE_STALE_HOURS))
       .map((s) => s.lastValue as number);
     return vals.length ? vals.reduce((a, b) => (b < a ? b : a)) : lastValue;
   })();
@@ -143,7 +173,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
   // Preços: depois da descoberta, a rotina lê as fontes conhecidas (plano A = código, plano B = IA com trecho).
   if (tracker.kind === 'price') {
     const known = db.listSources(trackerId);
-    const readable = known.filter((s) => s.status !== 'unreadable');
+    const readable = known.filter((s) => s.status !== 'unreadable' && trustedOk(s)); // fonte de loja desconhecida não é lida
     const lastDiscovery = db.lastDiscoveryAt(trackerId);
     const discoveryDue = (!lastDiscovery || hoursSince(lastDiscovery) >= DISCOVERY_EVERY_HOURS) && !searchCoolingDown;
     let anySuspect = false;
@@ -199,7 +229,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
     }
     let outcome;
     try {
-      outcome = await runSmartCheck(llm, tracker, models);
+      outcome = await runSmartCheck(llm, tracker, models, { trustedSites });
     } catch (e) {
       const error = (e as Error).message;
       if (e instanceof CheckError) usages.push(...e.usages);
@@ -209,7 +239,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
       return { ok: false, alerted: false, baseline: false, error };
     }
     usages.push(...outcome.usages);
-    findings = outcome.findings;
+    findings = filterByTrust ? await applyTrust(outcome.findings, trustedSites, deps.resolveFinalUrl ?? defaultResolveFinalUrl) : outcome.findings;
     if (tracker.kind === 'price') {
       // aprender fontes é um extra: um erro aqui não pode perder o check nem o custo da busca (e causar nova busca em seguida)
       try { await learnSources({ db, fetchPage }, tracker, findings); } catch { /* segue sem aprender desta vez */ }

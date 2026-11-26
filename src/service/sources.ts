@@ -282,7 +282,7 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
       // Falha passageira (timeout, rede, bloqueio, erro do servidor) não diz nada sobre a página: a fonte fica como
       // "failing" e a rotina tenta de novo. Só é "unreadable" quando a falha é definitiva (página inexistente/inválida).
       const transient = page.kind === 'timeout' || page.kind === 'network' || page.kind === 'blocked' || (page.kind === 'http' && (page.status ?? 0) >= 500);
-      if (!alreadyUsable) deps.db.upsertSource(tracker.id, { url, label, status: transient ? 'failing' : 'unreadable', lastError: page.message });
+      if (!alreadyUsable) deps.db.upsertSource(tracker.id, { url, label, status: transient ? 'failing' : 'unreadable', lastError: page.message, trustedVia: !!f.via });
       continue;
     }
     const close = (v: number | undefined) => v !== undefined && Math.abs(v - value) / value <= LEARN_TOLERANCE;
@@ -292,16 +292,16 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
       if (close(applyRule(rule, page.html))) {
         // se os dados estruturados também reproduzem o preço, servem de reserva quando a regra quebrar
         if (close(extractGenericPrice(page.html))) rule.genericOk = true;
-        deps.db.upsertSource(tracker.id, { url, label, rule, status: 'ok', lastValue: value });
+        deps.db.upsertSource(tracker.id, { url, label, rule, status: 'ok', lastValue: value, trustedVia: !!f.via });
         continue;
       }
     }
     if (close(extractGenericPrice(page.html))) {
-      deps.db.upsertSource(tracker.id, { url, label, rule: { type: 'generic' }, status: 'ok', lastValue: value });
+      deps.db.upsertSource(tracker.id, { url, label, rule: { type: 'generic' }, status: 'ok', lastValue: value, trustedVia: !!f.via });
       continue;
     }
     if (valueInText(htmlToText(page.html), value)) {
-      deps.db.upsertSource(tracker.id, { url, label, status: 'ok', lastValue: value });
+      deps.db.upsertSource(tracker.id, { url, label, status: 'ok', lastValue: value, trustedVia: !!f.via });
       continue;
     }
     if (alreadyUsable) continue;

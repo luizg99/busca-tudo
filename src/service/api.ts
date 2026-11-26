@@ -8,6 +8,7 @@ import { computeStats } from './reports';
 import type { SetupSession } from './setupChat';
 import type { WhatsAppStatus } from './notifier';
 import { normalizePhone } from './phone';
+import { getTrustedSites, normalizeTrustedList } from './trust';
 
 export const DEFAULT_MODELS = {
   setup: 'claude-sonnet-5-5',
@@ -94,6 +95,7 @@ export function readSettings(db: Db) {
     limitMonthUsd: num('limit_month_usd'),
     sendReportsToWhatsApp: db.getSetting('send_reports_whatsapp') === '1',
     alertNumber: db.getSetting('alert_number') || undefined,
+    trustedSites: getTrustedSites(db),
   };
 }
 
@@ -153,6 +155,10 @@ export function createApi(deps: ApiDeps): Server {
             db.setSetting('alert_number', n);
           }
         }
+        if (b.trustedSites !== undefined) {
+          if (!Array.isArray(b.trustedSites)) throw new HttpError(400, 'A lista de sites confiáveis deve ser uma lista de endereços.');
+          db.setSetting('trusted_sites', JSON.stringify(normalizeTrustedList(b.trustedSites)));
+        }
         if (b.sendReportsToWhatsApp !== undefined) db.setSetting('send_reports_whatsapp', b.sendReportsToWhatsApp ? '1' : '0');
         return send(res, 200, { ...readSettings(db), hasApiKey: deps.hasApiKey() });
       }
@@ -164,7 +170,7 @@ export function createApi(deps: ApiDeps): Server {
         const b = (await readBody(req)) as NewTracker;
         const errors = validateNewTracker(b);
         if (errors.length) return send(res, 400, { error: errors.join(' '), errors });
-        return send(res, 201, db.createTracker(b));
+        return send(res, 201, db.createTracker({ ...b, onlyTrusted: (b as { onlyTrusted?: boolean }).onlyTrusted !== false }));
       }
     }
 

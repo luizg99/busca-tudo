@@ -26,7 +26,7 @@ const isBrl = (f: Finding): boolean => !f.currency || f.currency.toUpperCase() =
 
 /** Achado de preço que pode servir de referência: encontrado, confiável e em BRL. */
 export function isReliablePrice(f: Finding): boolean {
-  return f.found && typeof f.value === 'number' && f.value > 0 && f.confidence >= MIN_CONFIDENCE && isBrl(f);
+  return f.found && !f.ignoredReason && typeof f.value === 'number' && f.value > 0 && f.confidence >= MIN_CONFIDENCE && isBrl(f);
 }
 
 /** Menor valor confiável de uma verificação (usado como "último valor" e nas estatísticas). */
@@ -88,7 +88,7 @@ export function decideAlert(t: Tracker, findings: Finding[], ctx: DecisionContex
   const ignored: string[] = [];
   const reliable: Finding[] = [];
   for (const f of findings) {
-    if (!f.found) continue;
+    if (!f.found || f.ignoredReason) continue; // oferta de loja desconhecida já foi descartada (e registrada) antes
     if (typeof f.value === 'number' && !isBrl(f)) {
       ignored.push(`moeda ${f.currency} ignorada (só BRL é comparado): ${f.title ?? f.sourceUrl ?? f.evidence}`);
       continue;
@@ -133,6 +133,9 @@ export function decideAlert(t: Tracker, findings: Finding[], ctx: DecisionContex
     const pct = ((diff / ctx.lastValue) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     lines.push(`Última consulta: ${brl(ctx.lastValue, best.currency)} (queda de ${brl(diff, best.currency)} · ${pct}%)`);
   }
+  // loja que vende e onde a oferta foi achada (ex.: "Amazon · achado em ofertinha.com.br") e o cupom, se houver
+  if (best.store || best.via) lines.push(`Loja: ${best.store ?? best.via}${best.via ? ` · achado em ${best.via}` : ''}`);
+  if (best.coupon) lines.push(`Cupom: ${best.coupon}`);
   if (best.sourceUrl) lines.push(best.sourceUrl);
   const text = lines.join('\n');
   return { baseline: false, ignored, alert: { text, sourceUrl: best.sourceUrl, value } };
