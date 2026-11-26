@@ -32,7 +32,7 @@ Ferramenta **pessoal** (um único usuário, sem login, sem controle de acesso) p
 ## Restrições
 
 - Tudo local. Chave da Anthropic guardada com `safeStorage` do Electron (criptografada pelo sistema), nunca em texto puro.
-- WhatsApp não oficial (whatsapp-web.js, QR code uma vez): aceito porque o único risco é o número do próprio usuário.
+- WhatsApp não oficial (Baileys, QR code uma vez): aceito porque o único risco é o número do próprio usuário.
 - As verificações dependem de um **serviço em segundo plano** rodando (não do app aberto). O computador precisa estar ligado.
 
 ## Abordagens consideradas
