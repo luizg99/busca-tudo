@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { fetchPage } from '../src/service/fetcher';
+import { fetchPage as realFetchPage } from '../src/service/fetcher';
+// os servidores de teste ficam em 127.0.0.1, que o fetcher bloqueia por padrão
+const fetchPage = (url: string, o: object = {}) => realFetchPage(url, { allowedHosts: ['127.0.0.1'], ...o });
 
 let server: Server | undefined;
 afterEach(() => new Promise<void>((r) => (server ? server.close(() => r()) : r())));

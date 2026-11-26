@@ -117,7 +117,7 @@ describe('pipeline: descoberta, rotina por código e plano B', () => {
     s.pages['https://l/a'] = page('3524,00');
     s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3524, label: 'Loja A' }]));
     await runCheck(s.deps, s.t.id);
-    s.advance(60);
+    s.advance(7 * 60); // a busca de reserva só roda se a última busca completa foi há mais de 6 h
     s.pages['https://l/a'] = blocked;
     s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3500, label: 'Loja A' }]));
     const r = await runCheck(s.deps, s.t.id);

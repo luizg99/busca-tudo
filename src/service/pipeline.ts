@@ -27,6 +27,8 @@ export interface CheckResultSummary {
 
 /** A busca completa (cara) roda na primeira vez e, depois, no máximo 1 vez por esse intervalo. */
 export const DISCOVERY_EVERY_HOURS = 24;
+/** Se nenhuma fonte der preço, a busca completa de reserva roda no máximo uma vez por esse intervalo. */
+export const FALLBACK_MIN_HOURS = 6;
 /** Quantas falhas seguidas de um site antes de avisar no WhatsApp. */
 export const WARN_AFTER_FAILURES = 2;
 /** Intervalo mínimo entre dois avisos sobre o mesmo site. */
@@ -53,7 +55,7 @@ const hostOf = (url: string): string => {
 
 /** Resumo do estado atual das fontes, para o histórico da verificação de descoberta. */
 function snapshot(sources: SourceRow[]): SourceResult[] {
-  return sources.map((s) => (s.status === 'unreadable'
+  return sources.map((s) => (s.status !== 'ok'
     ? { sourceId: s.id, url: s.url, label: s.label, ok: false, error: s.lastError }
     : { sourceId: s.id, url: s.url, label: s.label, ok: true, value: s.lastValue, method: s.rule?.type === 'regex' ? 'rule' : s.rule?.type === 'generic' ? 'generic' : 'ai' }));
 }
@@ -104,7 +106,8 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number): Promise<Ch
       mode = 'routine';
       for (const s of readable) {
         const { result, usages: u } = await readSource(
-          { fetchPage, tracker, lastValue, llm, model: models.routine },
+          // cada loja é comparada com o valor ANTERIOR DELA; o valor geral só vale enquanto ela não tem histórico
+          { fetchPage, tracker, lastValue: s.lastValue ?? lastValue, llm, model: models.routine },
           { id: s.id, url: s.url, label: s.label, rule: s.rule },
         );
         usages.push(...u);
@@ -117,8 +120,18 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number): Promise<Ch
           });
         }
       }
-      if (findings.length > 0) needDiscovery = false;
-      else mode = 'fallback'; // nenhuma fonte deu preço: busca completa
+      if (findings.length > 0) {
+        needDiscovery = false;
+      } else if (!lastDiscovery || now().getTime() - Date.parse(lastDiscovery) >= FALLBACK_MIN_HOURS * 3600_000) {
+        mode = 'fallback'; // nenhuma fonte deu preço: busca completa de reserva (limitada a 1 vez por FALLBACK_MIN_HOURS)
+      } else {
+        // reserva recente: não repete a busca cara; registra a falha (e a contagem das fontes segue para o aviso)
+        const error = `Nenhuma fonte deu preço (nem pelo código nem pela IA). A busca completa de reserva roda no máximo a cada ${FALLBACK_MIN_HOURS} horas.`;
+        const costUsd = usages.reduce((sum, u) => sum + estimateCostUsd(u), 0);
+        db.addCheck({ trackerId, at, ok: false, error, findings: [], model: usages.at(-1)?.model ?? 'leitura por código', costUsd, mode: 'routine', sources: sourceResults });
+        await warnProblemSources(deps, tracker);
+        return { ok: false, alerted: false, baseline: false, error };
+      }
     }
   }
 

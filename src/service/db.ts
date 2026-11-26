@@ -280,7 +280,7 @@ export function openDb(path: string) {
     },
     lastDiscoveryAt(trackerId: number): string | undefined {
       const r = raw
-        .prepare("SELECT at FROM checks WHERE tracker_id = ? AND mode IN ('discovery', 'fallback') ORDER BY at DESC, id DESC LIMIT 1")
+        .prepare("SELECT at FROM checks WHERE tracker_id = ? AND ok = 1 AND mode IN ('discovery', 'fallback') ORDER BY at DESC, id DESC LIMIT 1")
         .get(trackerId) as any;
       return r?.at;
     },

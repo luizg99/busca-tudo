@@ -1,3 +1,4 @@
+import vm from 'node:vm';
 import type { Finding, PriceRule, ReadMethod, SourceResult, Tracker } from '../shared/types';
 import type { Usage } from './cost';
 import type { Db } from './db';
@@ -18,12 +19,25 @@ export function plausible(value: number, lastValue: number | undefined): boolean
   return Math.abs(value - lastValue) / lastValue <= MAX_VARIATION;
 }
 
-/** Aplica uma regra a uma página (HTML). Nunca lança: regra inválida ou sem resultado devolve undefined. */
+const MAX_TEXT_CHARS = 300_000;
+const REGEX_TIMEOUT_MS = 150;
+/** Repetição aninhada: grupo com quantificador (ou alternância) dentro, ele mesmo repetido: base de ReDoS. */
+const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[*+](?:[^()\\]|\\.)*\)[*+{]/;
+const QUANTIFIED_ALTERNATION = /\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)[*+{]/;
+
+/**
+ * Aplica uma regra a uma página (HTML). Nunca lança nem trava: regra inválida, perigosa ou sem resultado devolve undefined.
+ * A regex vem da IA (a partir de conteúdo da web), então é recusada se tiver repetição aninhada e, de qualquer modo,
+ * roda isolada com limite de tempo sobre um texto de tamanho limitado.
+ */
 export function applyRule(rule: PriceRule, html: string): number | undefined {
   if (rule.type === 'generic') return extractGenericPrice(html);
   if (!rule.pattern || rule.pattern.length > MAX_PATTERN_LENGTH) return undefined;
+  if (NESTED_QUANTIFIER.test(rule.pattern) || QUANTIFIED_ALTERNATION.test(rule.pattern)) return undefined;
   try {
-    const m = new RegExp(rule.pattern, 'i').exec(htmlToText(html));
+    const re = new RegExp(rule.pattern, 'i');
+    const text = htmlToText(html).slice(0, MAX_TEXT_CHARS);
+    const m = vm.runInNewContext('re.exec(text)', { re, text }, { timeout: REGEX_TIMEOUT_MS }) as RegExpExecArray | null;
     return m && m[1] !== undefined ? parsePrice(m[1]) : undefined;
   } catch {
     return undefined;
@@ -121,7 +135,9 @@ function valueInText(text: string, value: number): boolean {
   const [int, dec] = fixed.split('.');
   const plain = `${int},${dec}`;
   const thousands = `${int.replace(/\B(?=(\d{3})+(?!\d))/g, '.')},${dec}`;
-  return text.includes(plain) || text.includes(thousands);
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // fronteiras: 299,00 não vale dentro de 1.299,00 nem de 2299,00
+  return [plain, thousands].some((n) => new RegExp(`(?<![\\d.,])${escape(n)}(?!\\d)`).test(text));
 }
 
 export interface LearnDeps {
