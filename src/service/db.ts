@@ -284,6 +284,13 @@ export function openDb(path: string) {
         .get(trackerId) as any;
       return r?.at;
     },
+    /** Última tentativa de busca completa (bem-sucedida ou não): base do intervalo de espera depois de uma falha. */
+    lastDiscoveryAttempt(trackerId: number): { at: string; ok: boolean } | undefined {
+      const r = raw
+        .prepare("SELECT at, ok FROM checks WHERE tracker_id = ? AND mode IN ('discovery', 'fallback') ORDER BY at DESC, id DESC LIMIT 1")
+        .get(trackerId) as any;
+      return r ? { at: r.at, ok: !!r.ok } : undefined;
+    },
     upsertSource(trackerId: number, s: SourceInput): SourceRow {
       const existing = raw.prepare('SELECT * FROM sources WHERE tracker_id = ? AND url = ?').get(trackerId, s.url) as any;
       if (existing) {

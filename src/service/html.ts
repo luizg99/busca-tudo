@@ -14,15 +14,30 @@ function decodeEntities(s: string): string {
     .replace(/&([a-z]+);/gi, (m, n) => ENTITIES[n.toLowerCase()] ?? m);
 }
 
-/** Tags que não quebram a linha: o texto delas se junta ao vizinho (um preço "R$", "1.299", ",00" em spans vira "R$1.299,00"). */
+/** Tags que não quebram a linha (span, b, a...). */
 const INLINE_TAGS = /<\/?(?:span|b|strong|i|em|a|sup|sub|small|font|u|mark|abbr|s|del|ins|code|label|bdi|cite)(?:\s[^>]*)?>/gi;
+/** Marcador temporário no lugar de uma tag inline. */
+const MARK = String.fromCharCode(1);
+const MARKS = new RegExp(`${MARK}+`, 'g');
+/** "R$" + marcador; dígito + marcador antes de ,N ou .N; "1." ou "1," + marcador + dígito: pedaços de um mesmo preço. */
+const PRICE_GLUE = [
+  new RegExp(`(R\\$)${MARK}+`, 'g'),
+  new RegExp(`(\\d)${MARK}+(?=[.,]\\d)`, 'g'),
+  new RegExp(`(\\d[.,])${MARK}+(?=\\d)`, 'g'),
+];
 
-/** Texto visível aproximado da página: sem script/style/comentários/tags, entidades decodificadas, espaços compactados. */
+/**
+ * Texto visível aproximado da página: sem script/style/comentários/tags, entidades decodificadas, espaços compactados.
+ * Elementos inline vizinhos só se juntam quando são pedaços de um mesmo preço ("R$" | "1.299" | ",00"); no resto viram
+ * palavras separadas (assim "R$ 3.524,00" e "12x de 293,67" não se fundem).
+ */
 export function htmlToText(html: string): string {
   const noBlocks = html
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/<(script|style|noscript|template)[\s\S]*?<\/\1>/gi, ' ');
-  const text = noBlocks.replace(INLINE_TAGS, '').replace(/<[^>]*>/g, ' ');
+  let text = noBlocks.replace(INLINE_TAGS, MARK).replace(/<[^>]*>/g, ' ');
+  for (const re of PRICE_GLUE) text = text.replace(re, '$1');
+  text = text.replace(MARKS, ' ');
   return decodeEntities(text).replace(/\s+/g, ' ').trim();
 }
 
@@ -48,31 +63,38 @@ function collectOfferPrices(node: unknown, out: number[], depth = 0): void {
   for (const [k, v] of Object.entries(o)) if (k !== 'offers') collectOfferPrices(v, out, depth + 1);
 }
 
-function offerGroups(node: unknown, groups: number[][], depth = 0): void {
+interface OfferGroup { product: boolean; prices: number[] }
+
+/** Listas (produtos relacionados, "compre junto") não são o produto principal, mesmo quando contêm Products. */
+const LIST_TYPES = ['ItemList', 'ListItem', 'BreadcrumbList', 'OfferCatalog'];
+
+function offerGroups(node: unknown, groups: OfferGroup[], depth = 0, inList = false): void {
   if (!node || depth > 8) return;
-  if (Array.isArray(node)) { node.forEach((n) => offerGroups(n, groups, depth + 1)); return; }
+  if (Array.isArray(node)) { node.forEach((n) => offerGroups(n, groups, depth + 1, inList)); return; }
   if (typeof node !== 'object') return;
   const o = node as Record<string, unknown>;
+  const type = Array.isArray(o['@type']) ? o['@type'].map(String) : [String(o['@type'] ?? '')];
+  const list = inList || type.some((t) => LIST_TYPES.includes(t));
   if ('offers' in o) {
     const prices: number[] = [];
     collectOfferPrices({ offers: o.offers }, prices);
-    if (prices.length) groups.push(prices);
+    if (prices.length) groups.push({ product: !list && type.includes('Product'), prices });
   }
-  for (const [k, v] of Object.entries(o)) if (k !== 'offers') offerGroups(v, groups, depth + 1);
+  for (const [k, v] of Object.entries(o)) if (k !== 'offers') offerGroups(v, groups, depth + 1, list);
 }
 
 /**
- * Preço publicado como dado estruturado. Vale o PRIMEIRO produto da página (o principal; os seguintes costumam ser
- * acessórios ou recomendações) e, dentro dele, o menor preço das ofertas. Sem JSON-LD, o primeiro meta/itemprop.
+ * Preço publicado como dado estruturado. Vale o primeiro nó do tipo Product (o principal; listas de produtos
+ * relacionados e acessórios vêm depois ou são de outro tipo) e, dentro dele, o menor preço das ofertas.
+ * Sem Product, o primeiro grupo de ofertas; sem JSON-LD, o primeiro meta/itemprop.
  */
 export function extractGenericPrice(html: string): number | undefined {
+  const groups: OfferGroup[] = [];
   for (const m of html.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
-    try {
-      const groups: number[][] = [];
-      offerGroups(JSON.parse(m[1].trim()), groups);
-      if (groups.length) return Math.min(...groups[0]);
-    } catch { /* bloco inválido */ }
+    try { offerGroups(JSON.parse(m[1].trim()), groups); } catch { /* bloco inválido */ }
   }
+  const chosen = groups.find((g) => g.product) ?? groups[0]; // entre todos os blocos da página, em ordem
+  if (chosen) return Math.min(...chosen.prices);
   for (const m of html.matchAll(/<meta[^>]+(?:product:price:amount|og:price:amount)[^>]*>/gi)) {
     const c = m[0].match(/content=["']([^"']+)["']/i);
     const v = c ? parsePrice(c[1]) : undefined;

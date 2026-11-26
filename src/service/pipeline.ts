@@ -29,6 +29,8 @@ export interface CheckResultSummary {
 export const DISCOVERY_EVERY_HOURS = 24;
 /** Se nenhuma fonte der preço, a busca completa de reserva roda no máximo uma vez por esse intervalo. */
 export const FALLBACK_MIN_HOURS = 6;
+/** Depois de uma busca completa que falhou, espera esse intervalo antes de tentar outra (evita repetir busca cara a cada verificação). */
+export const RETRY_AFTER_FAILED_SEARCH_HOURS = 1;
 /** Quantas falhas seguidas de um site antes de avisar no WhatsApp. */
 export const WARN_AFTER_FAILURES = 2;
 /** Intervalo mínimo entre dois avisos sobre o mesmo site. */
@@ -96,12 +98,23 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number): Promise<Ch
   let sourceResults: SourceResult[] = [];
   let mode: CheckMode = 'discovery';
   let needDiscovery = true;
+  const hoursSince = (iso: string) => (now().getTime() - Date.parse(iso)) / 3600_000;
+  // busca completa que falhou há pouco: não tenta de novo ainda (só preços; os demais tipos seguem o intervalo do usuário)
+  const attempt = tracker.kind === 'price' ? db.lastDiscoveryAttempt(trackerId) : undefined;
+  const searchCoolingDown = !!attempt && !attempt.ok && hoursSince(attempt.at) < RETRY_AFTER_FAILED_SEARCH_HOURS;
+  const recordFailure = async (error: string): Promise<CheckResultSummary> => {
+    const costUsd = usages.reduce((sum, u) => sum + estimateCostUsd(u), 0);
+    db.addCheck({ trackerId, at, ok: false, error, findings: [], model: usages.at(-1)?.model ?? 'leitura por código', costUsd, mode: 'routine', sources: sourceResults });
+    await warnProblemSources(deps, tracker);
+    return { ok: false, alerted: false, baseline: false, error };
+  };
+  const COOLING_MESSAGE = `A busca completa falhou há pouco; nova tentativa em até ${RETRY_AFTER_FAILED_SEARCH_HOURS} hora.`;
 
   // Preços: depois da descoberta, a rotina lê as fontes conhecidas (plano A = código, plano B = IA com trecho).
   if (tracker.kind === 'price') {
     const readable = db.listSources(trackerId).filter((s) => s.status !== 'unreadable');
     const lastDiscovery = db.lastDiscoveryAt(trackerId);
-    const discoveryDue = !lastDiscovery || now().getTime() - Date.parse(lastDiscovery) >= DISCOVERY_EVERY_HOURS * 3600_000;
+    const discoveryDue = (!lastDiscovery || hoursSince(lastDiscovery) >= DISCOVERY_EVERY_HOURS) && !searchCoolingDown;
     if (readable.length > 0 && !discoveryDue) {
       mode = 'routine';
       for (const s of readable) {
@@ -122,20 +135,19 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number): Promise<Ch
       }
       if (findings.length > 0) {
         needDiscovery = false;
-      } else if (!lastDiscovery || now().getTime() - Date.parse(lastDiscovery) >= FALLBACK_MIN_HOURS * 3600_000) {
+      } else if (searchCoolingDown) {
+        return recordFailure(`Nenhuma fonte deu preço (nem pelo código nem pela IA). ${COOLING_MESSAGE}`);
+      } else if (!lastDiscovery || hoursSince(lastDiscovery) >= FALLBACK_MIN_HOURS) {
         mode = 'fallback'; // nenhuma fonte deu preço: busca completa de reserva (limitada a 1 vez por FALLBACK_MIN_HOURS)
       } else {
         // reserva recente: não repete a busca cara; registra a falha (e a contagem das fontes segue para o aviso)
-        const error = `Nenhuma fonte deu preço (nem pelo código nem pela IA). A busca completa de reserva roda no máximo a cada ${FALLBACK_MIN_HOURS} horas.`;
-        const costUsd = usages.reduce((sum, u) => sum + estimateCostUsd(u), 0);
-        db.addCheck({ trackerId, at, ok: false, error, findings: [], model: usages.at(-1)?.model ?? 'leitura por código', costUsd, mode: 'routine', sources: sourceResults });
-        await warnProblemSources(deps, tracker);
-        return { ok: false, alerted: false, baseline: false, error };
+        return recordFailure(`Nenhuma fonte deu preço (nem pelo código nem pela IA). A busca completa de reserva roda no máximo a cada ${FALLBACK_MIN_HOURS} horas.`);
       }
     }
   }
 
   if (needDiscovery) {
+    if (searchCoolingDown) return recordFailure(COOLING_MESSAGE);
     let outcome;
     try {
       outcome = await runSmartCheck(llm, tracker, models);

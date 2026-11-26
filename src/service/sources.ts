@@ -21,26 +21,101 @@ export function plausible(value: number, lastValue: number | undefined): boolean
 
 const MAX_TEXT_CHARS = 300_000;
 const REGEX_TIMEOUT_MS = 150;
-/** Repetição aninhada: grupo com quantificador (ou alternância) dentro, ele mesmo repetido: base de ReDoS. */
-const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[*+](?:[^()\\]|\\.)*\)[*+{]/;
-const QUANTIFIED_ALTERNATION = /\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)[*+{]/;
+/** Um único ambiente isolado reaproveitado em todas as chamadas (criar um por chamada é lento). */
+const sandbox = vm.createContext({ re: undefined as unknown, text: '' });
+
+/** Quantificador que começa em `i`: `unbounded` para *, + e {n,}; limitado para ?, {n} e {n,m}. */
+function quantifierAt(p: string, i: number): { unbounded: boolean; length: number } {
+  const c = p[i];
+  if (c === '*' || c === '+') return { unbounded: true, length: p[i + 1] === '?' ? 2 : 1 };
+  if (c === '?') return { unbounded: false, length: p[i + 1] === '?' ? 2 : 1 };
+  if (c === '{') {
+    const m = /^\{(\d+)(,(\d*))?\}/.exec(p.slice(i, i + 16));
+    if (m) return { unbounded: m[2] !== undefined && m[3] === '', length: m[0].length + (p[i + m[0].length] === '?' ? 1 : 0) };
+  }
+  return { unbounded: false, length: 0 };
+}
+
+/**
+ * Detecta padrões com risco de backtracking catastrófico (ReDoS): grupo que contém repetição sem limite (em qualquer
+ * profundidade) ou alternância e que é, ele mesmo, repetido sem limite. Repetição limitada, como {1,3}, é aceita.
+ */
+export function isRiskyPattern(pattern: string): boolean {
+  type Group = { unbounded: boolean; alt: boolean };
+  const stack: Group[] = [];
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === '[') {
+      i++;
+      while (i < pattern.length && pattern[i] !== ']') i += pattern[i] === '\\' ? 2 : 1;
+      i++;
+      continue;
+    }
+    if (c === '(') {
+      stack.push({ unbounded: false, alt: false });
+      i++;
+      if (pattern[i] === '?') {
+        i++;
+        if (pattern[i] === '<' && pattern[i + 1] !== '=' && pattern[i + 1] !== '!') {
+          while (i < pattern.length && pattern[i] !== '>') i++;
+          i++;
+        } else if (pattern[i] === '<') i += 2;
+        else i++;
+      }
+      continue;
+    }
+    if (c === ')') {
+      const g = stack.pop();
+      i++;
+      const q = quantifierAt(pattern, i);
+      i += q.length;
+      if (g) {
+        if (q.unbounded && (g.unbounded || g.alt)) return true;
+        const parent = stack[stack.length - 1];
+        if (parent) {
+          parent.unbounded = parent.unbounded || g.unbounded || q.unbounded;
+          parent.alt = parent.alt || g.alt;
+        }
+      }
+      continue;
+    }
+    if (c === '|') {
+      if (stack.length) stack[stack.length - 1].alt = true;
+      i++;
+      continue;
+    }
+    if (c === '*' || c === '+' || c === '{') {
+      const q = quantifierAt(pattern, i);
+      if (q.unbounded && stack.length) stack[stack.length - 1].unbounded = true;
+      i += q.length || 1;
+      continue;
+    }
+    i++;
+  }
+  return false;
+}
 
 /**
  * Aplica uma regra a uma página (HTML). Nunca lança nem trava: regra inválida, perigosa ou sem resultado devolve undefined.
- * A regex vem da IA (a partir de conteúdo da web), então é recusada se tiver repetição aninhada e, de qualquer modo,
- * roda isolada com limite de tempo sobre um texto de tamanho limitado.
+ * A regex vem da IA (a partir de conteúdo da web): é recusada se tiver risco de ReDoS e, de qualquer modo, roda isolada
+ * com limite de tempo sobre um texto de tamanho limitado.
  */
 export function applyRule(rule: PriceRule, html: string): number | undefined {
   if (rule.type === 'generic') return extractGenericPrice(html);
   if (!rule.pattern || rule.pattern.length > MAX_PATTERN_LENGTH) return undefined;
-  if (NESTED_QUANTIFIER.test(rule.pattern) || QUANTIFIED_ALTERNATION.test(rule.pattern)) return undefined;
+  if (isRiskyPattern(rule.pattern)) return undefined;
   try {
-    const re = new RegExp(rule.pattern, 'i');
-    const text = htmlToText(html).slice(0, MAX_TEXT_CHARS);
-    const m = vm.runInNewContext('re.exec(text)', { re, text }, { timeout: REGEX_TIMEOUT_MS }) as RegExpExecArray | null;
+    sandbox.re = new RegExp(rule.pattern, 'i');
+    sandbox.text = htmlToText(html).slice(0, MAX_TEXT_CHARS);
+    const m = vm.runInContext('re.exec(text)', sandbox, { timeout: REGEX_TIMEOUT_MS }) as RegExpExecArray | null;
     return m && m[1] !== undefined ? parsePrice(m[1]) : undefined;
   } catch {
     return undefined;
+  } finally {
+    sandbox.re = undefined;
+    sandbox.text = '';
   }
 }
 
