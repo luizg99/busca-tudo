@@ -31,6 +31,8 @@ export interface SourceRow {
   lastError?: string;
   consecutiveFailures: number;
   lastNotifiedAt?: string;
+  /** Quando começou a sequência atual de falhas. */
+  failingSince?: string;
   createdAt: string;
 }
 export interface SourceInput {
@@ -95,7 +97,7 @@ CREATE TABLE IF NOT EXISTS sources (
   tracker_id INTEGER NOT NULL REFERENCES trackers(id) ON DELETE CASCADE,
   url TEXT NOT NULL, label TEXT, rule_json TEXT, status TEXT NOT NULL, method TEXT,
   last_value REAL, last_ok_at TEXT, last_fail_at TEXT, last_error TEXT,
-  consecutive_failures INTEGER NOT NULL DEFAULT 0, last_notified_at TEXT, created_at TEXT NOT NULL,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0, last_notified_at TEXT, failing_since TEXT, created_at TEXT NOT NULL,
   UNIQUE (tracker_id, url)
 );
 CREATE TABLE IF NOT EXISTS spend (
@@ -116,6 +118,7 @@ export function openDb(path: string) {
   };
   ensureColumn('checks', 'sources_json', 'TEXT');
   ensureColumn('checks', 'mode', 'TEXT');
+  ensureColumn('sources', 'failing_since', 'TEXT');
 
   const toTracker = (r: any): Tracker => ({
     id: r.id,
@@ -156,6 +159,7 @@ export function openDb(path: string) {
     lastError: r.last_error ?? undefined,
     consecutiveFailures: r.consecutive_failures,
     lastNotifiedAt: r.last_notified_at ?? undefined,
+    failingSince: r.failing_since ?? undefined,
     createdAt: r.created_at,
   });
   const toAlert = (r: any): AlertRow => ({
@@ -284,10 +288,10 @@ export function openDb(path: string) {
       const existing = raw.prepare('SELECT * FROM sources WHERE tracker_id = ? AND url = ?').get(trackerId, s.url) as any;
       if (existing) {
         raw
-          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ? WHERE id = ?')
+          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ?, failing_since = ? WHERE id = ?')
           .run(s.label ?? existing.label, s.rule ? JSON.stringify(s.rule) : existing.rule_json, s.status,
             s.lastValue ?? existing.last_value, s.status === 'ok' ? null : s.lastError ?? existing.last_error,
-            s.status === 'ok' ? 0 : existing.consecutive_failures, existing.id);
+            s.status === 'ok' ? 0 : existing.consecutive_failures, s.status === 'ok' ? null : existing.failing_since, existing.id);
         return api.getSource(existing.id)!;
       }
       const info = raw
@@ -306,12 +310,12 @@ export function openDb(path: string) {
     recordSourceResult(id: number, r: { ok: boolean; method?: ReadMethod; value?: number; error?: string; at: string }): void {
       if (r.ok) {
         raw
-          .prepare("UPDATE sources SET status = 'ok', consecutive_failures = 0, method = ?, last_value = ?, last_ok_at = ?, last_error = NULL WHERE id = ?")
+          .prepare("UPDATE sources SET status = 'ok', consecutive_failures = 0, method = ?, last_value = ?, last_ok_at = ?, last_error = NULL, failing_since = NULL WHERE id = ?")
           .run(r.method ?? null, r.value ?? null, r.at, id);
       } else {
         raw
-          .prepare("UPDATE sources SET status = 'failing', consecutive_failures = consecutive_failures + 1, last_fail_at = ?, last_error = ? WHERE id = ?")
-          .run(r.at, r.error ?? null, id);
+          .prepare("UPDATE sources SET status = 'failing', consecutive_failures = consecutive_failures + 1, last_fail_at = ?, last_error = ?, failing_since = COALESCE(failing_since, ?) WHERE id = ?")
+          .run(r.at, r.error ?? null, r.at, id);
       }
     },
     markSourceNotified(id: number, at: string): void {

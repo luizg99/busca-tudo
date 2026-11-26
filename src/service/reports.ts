@@ -4,6 +4,16 @@ import { reliableValue } from './decide';
 import type { LlmClient } from './llm';
 import type { Notifier } from './notifier';
 
+/** Um site em que o preço não pôde ser lido nem pelo código (plano A) nem pela IA (plano B). */
+export interface SourceProblem {
+  url: string;
+  label?: string;
+  status: 'failing' | 'unreadable';
+  error?: string;
+  failures: number;
+  since?: string;
+}
+
 export interface TrackerStats {
   trackerId: number;
   checks: number;
@@ -13,6 +23,8 @@ export interface TrackerStats {
   avg?: number;
   alerts: number;
   costUsd: number;
+  sourceProblems: SourceProblem[];
+  sourcesOk: number;
   relevant: Array<{ at: string; title?: string; value?: number; sourceUrl?: string }>;
 }
 
@@ -27,8 +39,13 @@ export function computeStats(db: Db, trackerId: number, fromIso: string, toIso: 
     if (v !== undefined) values.push(v);
   }
   const alerts = db.listAlerts(trackerId, fromIso, toIso);
+  const sources = db.listSources(trackerId);
   return {
     trackerId,
+    sourceProblems: sources
+      .filter((s) => s.status === 'unreadable' || s.status === 'failing')
+      .map((s) => ({ url: s.url, label: s.label, status: s.status as 'failing' | 'unreadable', error: s.lastError, failures: s.consecutiveFailures, since: s.failingSince })),
+    sourcesOk: sources.filter((s) => s.status === 'ok').length,
     checks: checks.length,
     failures: checks.filter((c) => !c.ok).length,
     ...(values.length
@@ -53,20 +70,50 @@ export interface DigestDeps {
 const PERIOD_HOURS: Record<DigestPeriod, number> = { daily: 24, weekly: 24 * 7 };
 const DIGEST_HOUR = 8;
 
+const hostOf = (url: string): string => {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
+};
+
+/** Seção fixa (sem IA) do relatório: sites em que o preço não foi lido nem pelo plano A nem pelo B, com o motivo. */
+export function renderSourceProblems(items: Array<{ tracker: string; problems: SourceProblem[] }>): string {
+  const lines: string[] = [];
+  for (const { tracker, problems } of items) {
+    for (const p of problems) {
+      const site = p.label || hostOf(p.url);
+      const detail =
+        p.status === 'unreadable'
+          ? 'só aparece na busca completa (o preço não está no HTML da página)'
+          : `${p.failures} verificações seguidas sem preço${p.since ? ` (desde ${new Date(p.since).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })})` : ''}`;
+      lines.push(`• ${tracker} — ${site}: ${p.error ?? 'motivo desconhecido'} · ${detail}`);
+    }
+  }
+  if (lines.length === 0) return '';
+  return ['⚠️ Sites sem preço', 'O preço não pôde ser lido pelo código (plano A) nem pela IA (plano B) nestes sites:', ...lines].join('\n');
+}
+
 export async function generateDigest(deps: DigestDeps, period: DigestPeriod): Promise<{ sent: boolean; text?: string }> {
   const { db, llm, notifier, model, sendWhatsApp, now } = deps;
   const to = now();
   const from = new Date(to.getTime() - PERIOD_HOURS[period] * 3600_000);
-  const sections = db
+  const all = db
     .listTrackers()
     .filter((t) => t.digest === period)
-    .map((t) => ({ name: t.name, kind: t.kind, stats: computeStats(db, t.id, from.toISOString(), to.toISOString()) }))
-    .filter((s) => s.stats.alerts > 0);
+    .map((t) => ({ name: t.name, kind: t.kind, stats: computeStats(db, t.id, from.toISOString(), to.toISOString()) }));
+  // A IA só resume as quedas de preço; os sites sem preço entram como texto fixo (sem IA) para ficarem sempre claros.
+  const sections = all
+    .filter((s) => s.stats.alerts > 0)
+    .map(({ name, kind, stats }) => {
+      const { sourceProblems: _problems, sourcesOk: _ok, ...forAi } = stats;
+      return { name, kind, stats: forAi };
+    });
+  const problems = all.filter((s) => s.stats.sourceProblems.length > 0).map((s) => ({ tracker: s.name, problems: s.stats.sourceProblems }));
 
   db.setSetting(`digest_last_${period}`, to.toISOString());
-  if (sections.length === 0) return { sent: false };
+  if (sections.length === 0 && problems.length === 0) return { sent: false };
 
-  const reply = await llm.chat({
+  let body = 'Nenhum alerta de preço neste período.';
+  if (sections.length > 0) {
+    const reply = await llm.chat({
     model,
     system:
       'Você escreve resumos curtos em português do Brasil para WhatsApp sobre acompanhamentos pessoais. ' +
@@ -75,8 +122,11 @@ export async function generateDigest(deps: DigestDeps, period: DigestPeriod): Pr
       { role: 'user', content: `Resumo ${period === 'daily' ? 'diário' : 'semanal'}. Dados:\n${JSON.stringify(sections, null, 2)}` },
     ],
   });
-  deps.onUsage?.(reply.usage);
-  const text = reply.text.trim();
+    deps.onUsage?.(reply.usage);
+    body = reply.text.trim();
+  }
+  const problemBlock = renderSourceProblems(problems);
+  const text = problemBlock ? `${body}\n\n${problemBlock}` : body;
   db.addReport({ period, text, at: to.toISOString() });
   if (sendWhatsApp) await notifier.sendInfo(text);
   return { sent: true, text };
