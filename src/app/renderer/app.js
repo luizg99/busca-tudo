@@ -313,6 +313,7 @@ async function viewSettings() {
   const mSetup = model(s.models.setup), mRoutine = model(s.models.routine), mEsc = model(s.models.escalate);
   const day = h('input', { type: 'number', min: '0', step: '0.1', value: s.limitDayUsd ?? '', placeholder: 'sem limite' });
   const month = h('input', { type: 'number', min: '0', step: '0.5', value: s.limitMonthUsd ?? '', placeholder: 'sem limite' });
+  const alertNumber = h('input', { type: 'text', value: s.alertNumber ?? '', placeholder: 'vazio = o próprio número conectado', inputmode: 'tel', 'aria-label': 'Número que recebe os avisos' });
   const wa = h('input', { type: 'checkbox', checked: s.sendReportsToWhatsApp });
   const boot = h('input', { type: 'checkbox', checked: startup });
 
@@ -329,7 +330,7 @@ async function viewSettings() {
 
   const save = btn('Salvar alterações', { kind: 'primary', onclick: async () => {
     try {
-      const body = { models: { setup: mSetup.value, routine: mRoutine.value, escalate: mEsc.value }, limitDayUsd: day.value === '' ? null : Number(day.value), limitMonthUsd: month.value === '' ? null : Number(month.value), sendReportsToWhatsApp: wa.checked };
+      const body = { models: { setup: mSetup.value, routine: mRoutine.value, escalate: mEsc.value }, limitDayUsd: day.value === '' ? null : Number(day.value), limitMonthUsd: month.value === '' ? null : Number(month.value), sendReportsToWhatsApp: wa.checked, alertNumber: alertNumber.value.trim() === '' ? null : alertNumber.value.trim() };
       if (key.value.trim()) body.anthropicApiKey = key.value.trim();
       await api('PUT', '/settings', body);
       key.value = '';
@@ -346,7 +347,8 @@ async function viewSettings() {
         h('div', { class: 'grid3', style: 'margin-top:14px' }, field('Conversa de cadastro', mSetup, 'modelo'), field('Verificações', mRoutine, 'modelo barato'), field('Reforço', mEsc, 'baixa confiança'))),
       section('Limites de custo', 'As verificações pausam sozinhas quando o limite é atingido.', null,
         h('div', { class: 'grid2' }, field('Limite diário (US$)', day), field('Limite mensal (US$)', month))),
-      section('Avisos', null, null,
+      section('Avisos', 'Para o celular notificar, envie para outro número: mensagens que você manda para si mesmo costumam chegar sem som.', null,
+        h('div', { style: 'margin-bottom:10px' }, field('Número que recebe os avisos', alertNumber, 'Com DDD, por exemplo 11 99999-0000. Deixe vazio para enviar ao próprio número conectado. Use "Enviar mensagem de teste" para conferir.')),
         toggle('Enviar resumos também no WhatsApp', 'Os resumos sempre aparecem na aba Relatórios.', wa),
         toggle('Iniciar o serviço junto com o Windows', 'Mantém as verificações rodando mesmo com o app fechado.', boot)),
       section('WhatsApp', 'Conexão para receber os alertas.', badge(waOk ? 'Conectado' : st.ok && st.data.whatsapp === 'qr' ? 'Aguardando QR' : 'Desconectado', waOk ? 'ok' : 'warn'),

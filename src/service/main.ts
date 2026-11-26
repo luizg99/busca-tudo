@@ -61,7 +61,7 @@ async function main(): Promise<void> {
     },
     log,
   );
-  notifier = new Notifier(db, transport, now);
+  notifier = new Notifier(db, transport, now, { getTarget: () => db.getSetting('alert_number') || undefined });
 
   // Limites padrão na primeira execução, para o gasto nunca ficar sem teto sem o usuário saber.
   if (db.getSetting('limit_day_usd') === undefined) db.setSetting('limit_day_usd', '2');

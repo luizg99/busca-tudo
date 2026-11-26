@@ -7,6 +7,7 @@ import type { CheckResultSummary } from './pipeline';
 import { computeStats } from './reports';
 import type { SetupSession } from './setupChat';
 import type { WhatsAppStatus } from './notifier';
+import { normalizePhone } from './phone';
 
 export const DEFAULT_MODELS = {
   setup: 'claude-sonnet-5-5',
@@ -92,6 +93,7 @@ export function readSettings(db: Db) {
     limitDayUsd: num('limit_day_usd'),
     limitMonthUsd: num('limit_month_usd'),
     sendReportsToWhatsApp: db.getSetting('send_reports_whatsapp') === '1',
+    alertNumber: db.getSetting('alert_number') || undefined,
   };
 }
 
@@ -143,6 +145,14 @@ export function createApi(deps: ApiDeps): Server {
         }
         if (b.limitDayUsd !== undefined) db.setSetting('limit_day_usd', b.limitDayUsd === null ? '' : String(Number(b.limitDayUsd)));
         if (b.limitMonthUsd !== undefined) db.setSetting('limit_month_usd', b.limitMonthUsd === null ? '' : String(Number(b.limitMonthUsd)));
+        if (b.alertNumber !== undefined) {
+          if (b.alertNumber === null || String(b.alertNumber).trim() === '') db.setSetting('alert_number', '');
+          else {
+            const n = normalizePhone(String(b.alertNumber));
+            if (!n) throw new HttpError(400, 'Esse número não parece válido. Informe com DDD, por exemplo 11 99999-0000.');
+            db.setSetting('alert_number', n);
+          }
+        }
         if (b.sendReportsToWhatsApp !== undefined) db.setSetting('send_reports_whatsapp', b.sendReportsToWhatsApp ? '1' : '0');
         return send(res, 200, { ...readSettings(db), hasApiKey: deps.hasApiKey() });
       }

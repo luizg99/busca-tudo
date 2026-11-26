@@ -3,7 +3,10 @@ import type { Db } from './db';
 
 export interface Transport {
   isReady(): boolean;
+  /** Envia para o próprio número conectado. */
   sendToSelf(text: string): Promise<void>;
+  /** Envia para outro número (só dígitos com DDI). */
+  sendTo?(number: string, text: string): Promise<void>;
 }
 
 /** Espera antes de tentar reconectar o WhatsApp: 30s, 1min, 2min… com teto de 10 min. */
@@ -20,10 +23,14 @@ export class Notifier {
     private db: Db,
     private transport: Transport,
     private now: () => Date = () => new Date(),
-    options: { sendTimeoutMs?: number } = {},
+    options: { sendTimeoutMs?: number; getTarget?: () => string | undefined } = {},
   ) {
     this.sendTimeoutMs = options.sendTimeoutMs ?? 45_000;
+    this.getTarget = options.getTarget ?? (() => undefined);
   }
+
+  /** Número que recebe os avisos; vazio = o próprio número conectado. Lido a cada envio. */
+  private getTarget: () => string | undefined;
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.chain.then(fn, fn);
@@ -37,7 +44,9 @@ export class Notifier {
       timer = setTimeout(() => reject(new Error('Tempo esgotado ao enviar pelo WhatsApp.')), this.sendTimeoutMs);
     });
     try {
-      await Promise.race([this.transport.sendToSelf(text), timeout]);
+      const target = this.getTarget();
+      const send = target && this.transport.sendTo ? this.transport.sendTo(target, text) : this.transport.sendToSelf(text);
+      await Promise.race([send, timeout]);
     } finally {
       clearTimeout(timer);
     }
@@ -236,6 +245,28 @@ export function createWhatsAppTransport(
         await current.sendMessage(selfJid(current.user?.id), { text });
       } catch (e) {
         // socket provavelmente morto: marca como não pronto e derruba para reconectar (o Notifier mantém o alerta pendente)
+        ready = false;
+        try { current.end(e instanceof Error ? e : undefined); } catch { /* já fechado */ }
+        throw e;
+      }
+    },
+    async sendTo(number: string, text: string) {
+      if (!ready || !sock) throw new Error('WhatsApp não está conectado.');
+      const current = sock;
+      const digits = number.replace(/\D/g, '');
+      // Pergunta ao WhatsApp o JID real (corrige o nono dígito do Brasil). Se a consulta falhar por rede, tenta o JID direto;
+      // se ele responder que o número não existe, é erro de destino (não derruba a conexão).
+      let jid = `${digits}@s.whatsapp.net`;
+      try {
+        const found = (await current.onWhatsApp(digits))?.find((r: any) => r.exists);
+        if (!found) throw Object.assign(new Error(`O número ${digits} não está registrado no WhatsApp.`), { destino: true });
+        if (found.jid) jid = found.jid;
+      } catch (e) {
+        if ((e as any).destino) throw e;
+      }
+      try {
+        await current.sendMessage(jid, { text });
+      } catch (e) {
         ready = false;
         try { current.end(e instanceof Error ? e : undefined); } catch { /* já fechado */ }
         throw e;

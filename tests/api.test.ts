@@ -133,6 +133,20 @@ describe('api', () => {
     expect(r.json).toEqual({ ok: false, error: 'WhatsApp não está conectado.' });
   });
 
+  it('PUT /settings normaliza o número de destino; inválido dá 400; null limpa', async () => {
+    const { call } = await start();
+    const ok = await call('PUT', '/settings', { alertNumber: '(11) 99999-0000' });
+    expect(ok.status).toBe(200);
+    expect(ok.json.alertNumber).toBe('5511999990000');
+    expect((await call('GET', '/settings')).json.alertNumber).toBe('5511999990000');
+    const bad = await call('PUT', '/settings', { alertNumber: 'abc' });
+    expect(bad.status).toBe(400);
+    expect(bad.raw).toContain('número');
+    expect((await call('GET', '/settings')).json.alertNumber).toBe('5511999990000'); // inválido não altera
+    const cleared = await call('PUT', '/settings', { alertNumber: null });
+    expect(cleared.json.alertNumber).toBeUndefined();
+  });
+
   it('GET /status informa o buildId do código em execução', async () => {
     const { call } = await start();
     expect((await call('GET', '/status')).json.buildId).toBe('build-1');
