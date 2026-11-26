@@ -41,3 +41,13 @@ npm test           # testes
 6. Resumo: aparece em Relatórios (e no WhatsApp, se ligado) só quando houve algo relevante.
 
 Variáveis úteis: `BUSCA_TUDO_DIR` (pasta de dados), `BUSCA_TUDO_PORT`, `BUSCA_TUDO_NODE` (caminho do `node.exe` usado pela tarefa de logon).
+
+## Como o preço é lido (e quanto custa)
+
+A busca completa na web (cara, ~US$ 0,03) roda só na primeira vez, 1 vez por dia e quando as fontes falham. Nas demais verificações:
+
+1. **Plano A (custo zero):** o código baixa as páginas que a IA descobriu e lê o preço por uma regra aprendida ou por dados estruturados.
+2. **Plano B (centavos de centavo):** se o plano A falhar, o Haiku lê só um trecho da página.
+3. **Sem preço por A nem B:** o site aparece em **Sites sem preço** no cartão, no detalhe e nos relatórios, e o app avisa no WhatsApp (na 2ª falha seguida, no máximo 1 aviso por site a cada 24 h). Enquanto isso o preço dele só entra pela busca completa.
+
+Design e plano: `docs/superpowers/plans/2026-11-26-leitura-por-codigo.md`.
