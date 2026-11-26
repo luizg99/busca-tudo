@@ -39,13 +39,18 @@ export const WARN_COOLDOWN_HOURS = 24;
 /** Acompanhamentos em verificação agora: impede o agendador e o "Verificar agora" de rodarem o mesmo ao mesmo tempo. */
 const running = new Set<number>();
 
-export async function runCheck(deps: PipelineDeps, trackerId: number): Promise<CheckResultSummary> {
+export interface RunOptions {
+  /** Verificação pedida pelo usuário ("Verificar agora"): ignora a espera depois de uma busca completa que falhou. */
+  manual?: boolean;
+}
+
+export async function runCheck(deps: PipelineDeps, trackerId: number, opts: RunOptions = {}): Promise<CheckResultSummary> {
   if (running.has(trackerId)) {
     return { ok: false, alerted: false, baseline: false, error: 'Verificação já em andamento para este acompanhamento.' };
   }
   running.add(trackerId);
   try {
-    return await runCheckLocked(deps, trackerId);
+    return await runCheckLocked(deps, trackerId, opts);
   } finally {
     running.delete(trackerId);
   }
@@ -84,7 +89,7 @@ async function warnProblemSources(deps: PipelineDeps, tracker: Tracker): Promise
   }
 }
 
-async function runCheckLocked(deps: PipelineDeps, trackerId: number): Promise<CheckResultSummary> {
+async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOptions): Promise<CheckResultSummary> {
   const { db, llm, notifier, models, now } = deps;
   const fetchPage = deps.fetchPage ?? defaultFetchPage;
   const tracker = db.getTracker(trackerId);
@@ -101,7 +106,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number): Promise<Ch
   const hoursSince = (iso: string) => (now().getTime() - Date.parse(iso)) / 3600_000;
   // busca completa que falhou há pouco: não tenta de novo ainda (só preços; os demais tipos seguem o intervalo do usuário)
   const attempt = tracker.kind === 'price' ? db.lastDiscoveryAttempt(trackerId) : undefined;
-  const searchCoolingDown = !!attempt && !attempt.ok && hoursSince(attempt.at) < RETRY_AFTER_FAILED_SEARCH_HOURS;
+  const searchCoolingDown = !opts.manual && !!attempt && !attempt.ok && hoursSince(attempt.at) < RETRY_AFTER_FAILED_SEARCH_HOURS;
   const recordFailure = async (error: string): Promise<CheckResultSummary> => {
     const costUsd = usages.reduce((sum, u) => sum + estimateCostUsd(u), 0);
     db.addCheck({ trackerId, at, ok: false, error, findings: [], model: usages.at(-1)?.model ?? 'leitura por código', costUsd, mode: 'routine', sources: sourceResults });

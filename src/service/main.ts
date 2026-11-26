@@ -68,19 +68,21 @@ async function main(): Promise<void> {
   if (db.getSetting('limit_month_usd') === undefined) db.setSetting('limit_month_usd', '30');
   const recordSpend = (source: string) => (u: Usage) => db.addSpend({ at: now().toISOString(), usd: estimateCostUsd(u), source });
 
-  const runCheckNow = async (id: number) => {
+  // `manual`: pedido pelo usuário (botão "Verificar agora"); o agendador usa manual=false e respeita as esperas
+  const runCheckFor = async (id: number, manual: boolean) => {
     if (!llm) return { ok: false, alerted: false, baseline: false, error: 'Chave da Anthropic não configurada.' };
     const lim = overLimit(db, now());
     if (lim.over) return { ok: false, alerted: false, baseline: false, error: `Limite de custo ${lim.period === 'day' ? 'diário' : 'mensal'} atingido.` };
-    return runCheck({ db, llm, notifier, models: readSettings(db).models, now }, id);
+    return runCheck({ db, llm, notifier, models: readSettings(db).models, now }, id, { manual });
   };
+  const runCheckNow = (id: number) => runCheckFor(id, true);
 
   const scheduler = new Scheduler({
     db,
     now,
     run: async (id) => {
       if (!llm) return;
-      const r = await runCheckNow(id);
+      const r = await runCheckFor(id, false);
       log(`check tracker=${id} ok=${r.ok} alerted=${r.alerted}${r.error ? ` error=${r.error}` : ''}`);
     },
   });

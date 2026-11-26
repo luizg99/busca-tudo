@@ -13,28 +13,28 @@ export interface ResolvedAddress { address: string; family: number }
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const MAX_REDIRECTS = 5;
 
-/** Endereços que não são da internet pública: loopback, redes privadas, link-local (inclui metadados de nuvem), CGNAT etc. */
-export function isPrivateHost(hostRaw: string): boolean {
-  const h = hostRaw.toLowerCase().replace(/^\[|\]$/g, '');
-  if (h === 'localhost' || h.endsWith('.localhost')) return true;
-  if (h.includes(':')) {
-    if (h === '::1' || h === '::') return true;
-    if (/^f[cd]/.test(h) || /^fe[89ab]/.test(h)) return true;
-    if (h.startsWith('::ffff:')) {
-      const rest = h.slice(7);
-      const hex = rest.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-      if (hex) {
-        const x = parseInt(hex[1], 16);
-        const y = parseInt(hex[2], 16);
-        return isPrivateHost(`${x >> 8}.${x & 255}.${y >> 8}.${y & 255}`);
-      }
-      return isPrivateHost(rest); // forma decimal ::ffff:a.b.c.d
-    }
-    return false;
+/** Expande um IPv6 (com "::" e/ou cauda IPv4 decimal) em 8 grupos de 16 bits; undefined se não for IPv6 válido. */
+function parseIpv6(h: string): number[] | undefined {
+  let s = h;
+  const tail = s.match(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (tail) {
+    const [a, b, c, d] = tail.slice(1).map(Number);
+    if ([a, b, c, d].some((n) => n > 255)) return undefined;
+    s = s.slice(0, s.length - tail[0].length) + ((a << 8) | b).toString(16) + ':' + ((c << 8) | d).toString(16);
   }
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return false;
-  const [a, b, c] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const halves = s.split('::');
+  if (halves.length > 2) return undefined;
+  const parse = (part: string) => (part === '' ? [] : part.split(':'));
+  const head = parse(halves[0]);
+  const rest = halves.length === 2 ? parse(halves[1]) : [];
+  const missing = 8 - head.length - rest.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return undefined;
+  const groups = [...head, ...Array(halves.length === 2 ? missing : 0).fill('0'), ...rest].map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN));
+  return groups.length === 8 && groups.every((g) => !Number.isNaN(g)) ? groups : undefined;
+}
+
+/** IPv4 que não é da internet pública: loopback, privadas, link-local, CGNAT, multicast/reservado/broadcast e blocos de documentação. */
+function isReservedIpv4(a: number, b: number, c: number): boolean {
   return (
     a === 0 || a === 10 || a === 127 ||
     (a === 169 && b === 254) ||
@@ -42,8 +42,32 @@ export function isPrivateHost(hostRaw: string): boolean {
     (a === 192 && b === 168) ||
     (a === 100 && b >= 64 && b <= 127) || // CGNAT
     (a === 198 && (b === 18 || b === 19)) || // testes de rede
-    (a === 192 && b === 0 && c === 0) // IETF
+    (a === 192 && b === 0 && (c === 0 || c === 2)) || // IETF e documentação
+    (a === 198 && b === 51 && c === 100) || // documentação
+    (a === 203 && b === 0 && c === 113) || // documentação
+    a >= 224 // multicast, reservado e broadcast
   );
+}
+
+/**
+ * Endereços que não são da internet pública. IPv4: faixas reservadas. IPv6: só é aceito o unicast global (2000::/3);
+ * IPv4 mapeado (::ffff:) e 6to4 (2002::/16) têm o IPv4 embutido verificado; Teredo e documentação são bloqueados.
+ */
+export function isPrivateHost(hostRaw: string): boolean {
+  const h = hostRaw.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (h.includes(':')) {
+    const g = parseIpv6(h);
+    if (!g) return true; // não dá para interpretar: não arrisca
+    const v4 = (x: number, y: number) => isReservedIpv4(x >> 8, x & 255, y >> 8);
+    if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return v4(g[6], g[7]); // ::ffff:a.b.c.d
+    if (g[0] === 0x2002) return v4(g[1], g[2]); // 6to4
+    if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true; // Teredo e documentação
+    return !(g[0] >= 0x2000 && g[0] <= 0x3fff); // fora de 2000::/3 (inclui ::1, fc00::, fe80::, ff00::, 64:ff9b::, ::a.b.c.d)
+  }
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  return isReservedIpv4(Number(m[1]), Number(m[2]), Number(m[3]));
 }
 
 const internal = (): FetchResult => ({ ok: false, kind: 'invalid', message: 'Endereço interno bloqueado (só sites públicos são acessados).' });
@@ -109,16 +133,18 @@ export async function fetchPage(url: string, opts: FetchOptions = {}): Promise<F
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const lookup = (hostname: string, options: { all?: boolean }, cb: (...args: any[]) => void) => {
-    resolver(hostname)
-      .then((addrs) => {
-        if (addrs.length === 0) throw Object.assign(new Error(`Não foi possível resolver ${hostname}`), { code: 'ENOTFOUND' });
-        if (addrs.some((a) => isPrivateHost(a.address) && !exemptResolved.has(a.address.toLowerCase()))) {
-          throw Object.assign(new Error('Endereço interno'), { code: 'EINTERNAL' });
+    resolver(hostname).then(
+      (addrs) => {
+        // o callback roda exatamente uma vez, mesmo se algo aqui dentro lançar
+        if (addrs.length === 0) return cb(Object.assign(new Error(`Não foi possível resolver ${hostname}`), { code: 'ENOTFOUND' }));
+        const hostAllowed = allowedHosts.has(hostname.toLowerCase());
+        if (!hostAllowed && addrs.some((a) => isPrivateHost(a.address) && !exemptResolved.has(a.address.toLowerCase()))) {
+          return cb(Object.assign(new Error('Endereço interno'), { code: 'EINTERNAL' }));
         }
-        if (options?.all) cb(null, addrs);
-        else cb(null, addrs[0].address, addrs[0].family);
-      })
-      .catch((e) => cb(e));
+        return options?.all ? cb(null, addrs) : cb(null, addrs[0].address, addrs[0].family);
+      },
+      (e) => cb(e),
+    );
   };
 
   const request = (u: URL) =>
@@ -172,7 +198,8 @@ export async function fetchPage(url: string, opts: FetchOptions = {}): Promise<F
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === 'EINTERNAL') return internal();
-    if (err.name === 'AbortError' || err.code === 'ABORT_ERR') return { ok: false, kind: 'timeout', message: `O site demorou mais de ${Math.round(timeoutMs / 1000)} s para responder.` };
+    // o limite de tempo pode estourar no meio do corpo, quando o erro chega como "aborted"/ECONNRESET
+    if (controller.signal.aborted || err.name === 'AbortError' || err.code === 'ABORT_ERR') return { ok: false, kind: 'timeout', message: `O site demorou mais de ${Math.round(timeoutMs / 1000)} s para responder.` };
     return { ok: false, kind: 'network', message: `Falha de conexão com o site (${err.message}).` };
   } finally {
     clearTimeout(timer);

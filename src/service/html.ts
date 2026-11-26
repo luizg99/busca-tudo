@@ -67,18 +67,20 @@ interface OfferGroup { product: boolean; prices: number[] }
 
 /** Listas (produtos relacionados, "compre junto") não são o produto principal, mesmo quando contêm Products. */
 const LIST_TYPES = ['ItemList', 'ListItem', 'BreadcrumbList', 'OfferCatalog'];
+const PRODUCT_TYPES = ['Product', 'ProductGroup', 'IndividualProduct', 'ProductModel'];
 
 function offerGroups(node: unknown, groups: OfferGroup[], depth = 0, inList = false): void {
   if (!node || depth > 8) return;
   if (Array.isArray(node)) { node.forEach((n) => offerGroups(n, groups, depth + 1, inList)); return; }
   if (typeof node !== 'object') return;
   const o = node as Record<string, unknown>;
-  const type = Array.isArray(o['@type']) ? o['@type'].map(String) : [String(o['@type'] ?? '')];
+  // "https://schema.org/Product", "schema:Product" e "Product" são o mesmo tipo
+  const type = (Array.isArray(o['@type']) ? o['@type'] : [o['@type'] ?? '']).map((t) => String(t).replace(/^.*[/#:]/, ''));
   const list = inList || type.some((t) => LIST_TYPES.includes(t));
   if ('offers' in o) {
     const prices: number[] = [];
     collectOfferPrices({ offers: o.offers }, prices);
-    if (prices.length) groups.push({ product: !list && type.includes('Product'), prices });
+    if (prices.length) groups.push({ product: !list && type.some((t) => PRODUCT_TYPES.includes(t)), prices });
   }
   for (const [k, v] of Object.entries(o)) if (k !== 'offers') offerGroups(v, groups, depth + 1, list);
 }

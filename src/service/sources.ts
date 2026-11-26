@@ -24,14 +24,20 @@ const REGEX_TIMEOUT_MS = 150;
 /** Um único ambiente isolado reaproveitado em todas as chamadas (criar um por chamada é lento). */
 const sandbox = vm.createContext({ re: undefined as unknown, text: '' });
 
-/** Quantificador que começa em `i`: `unbounded` para *, + e {n,}; limitado para ?, {n} e {n,m}. */
+/** Repetição com limite maior que isso conta como "sem limite" (um grupo repetido 50 vezes explode igual). */
+const SMALL_REPEAT_MAX = 3;
+
+/** Quantificador que começa em `i`: `unbounded` para *, +, {n,} e limites grandes; limitado para ? e {n}/{n,m} pequenos. */
 function quantifierAt(p: string, i: number): { unbounded: boolean; length: number } {
   const c = p[i];
   if (c === '*' || c === '+') return { unbounded: true, length: p[i + 1] === '?' ? 2 : 1 };
   if (c === '?') return { unbounded: false, length: p[i + 1] === '?' ? 2 : 1 };
   if (c === '{') {
     const m = /^\{(\d+)(,(\d*))?\}/.exec(p.slice(i, i + 16));
-    if (m) return { unbounded: m[2] !== undefined && m[3] === '', length: m[0].length + (p[i + m[0].length] === '?' ? 1 : 0) };
+    if (m) {
+      const max = m[2] === undefined ? Number(m[1]) : m[3] === '' ? Infinity : Number(m[3]);
+      return { unbounded: max > SMALL_REPEAT_MAX, length: m[0].length + (p[i + m[0].length] === '?' ? 1 : 0) };
+    }
   }
   return { unbounded: false, length: 0 };
 }
