@@ -56,10 +56,8 @@ async function main(): Promise<void> {
     (qr) => { waQr = qr; },
     (s) => {
       waStatus = s;
-      if (s === 'ready') {
-        waQr = undefined;
-        void notifier.flushPending();
-      }
+      if (s !== 'qr') waQr = undefined; // um QR antigo não vale mais
+      if (s === 'ready') void notifier.flushPending();
     },
     log,
   );
