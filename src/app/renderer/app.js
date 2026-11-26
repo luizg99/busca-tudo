@@ -130,6 +130,53 @@ function nextCheck(t, last, overLimit) {
   return { text: when(new Date(due).toISOString()), sub: rel(due - Date.now()) };
 }
 
+let editingId = null; // acompanhamento em edição (pausa a atualização automática da lista)
+const FREQS = [[15, '15 minutos'], [30, '30 minutos'], [60, '1 hora'], [120, '2 horas'], [180, '3 horas'], [360, '6 horas'], [720, '12 horas'], [1440, '1 vez por dia']];
+
+function trackerEditor(t, stats) {
+  const name = h('input', { type: 'text', value: t.name, 'aria-label': 'Nome' });
+  const goal = h('input', { type: 'text', value: t.goal, 'aria-label': 'Objetivo' });
+  const freqOptions = FREQS.some(([m]) => m === t.intervalMinutes) ? FREQS : [...FREQS, [t.intervalMinutes, `${t.intervalMinutes} minutos`]].sort((a, b) => a[0] - b[0]);
+  const freq = h('select', {}, freqOptions.map(([m, l]) => h('option', { value: String(m), selected: m === t.intervalMinutes }, l)));
+  const condOptions = t.kind === 'news' ? [['new_items', 'Qualquer novidade']] : [['below_last', 'Preço abaixo do último valor'], ['below_value', 'Preço abaixo de um valor fixo']];
+  const cond = h('select', {}, condOptions.map(([v, l]) => h('option', { value: v, selected: v === t.alertCondition.type }, l)));
+  const limit = h('input', { type: 'number', min: '0', step: '0.01', value: t.alertCondition.type === 'below_value' ? t.alertCondition.value : '', placeholder: 'ex.: 3500' });
+  const limitField = field('Valor (R$)', limit);
+  const digest = h('select', {}, [['none', 'Sem resumo'], ['daily', 'Resumo diário'], ['weekly', 'Resumo semanal']].map(([v, l]) => h('option', { value: v, selected: v === t.digest }, l)));
+  const estimate = h('div', { class: 'muted small' });
+  const perCheck = stats && stats.checks ? stats.costUsd / stats.checks : 0.034;
+  const update = () => {
+    limitField.classList.toggle('hidden', cond.value !== 'below_value');
+    const perDay = 1440 / Number(freq.value);
+    estimate.textContent = `≈ ${Math.round(perDay)} verificações por dia · custo estimado ≈ ${usd(perDay * perCheck)} por dia`;
+  };
+  freq.addEventListener('change', update); cond.addEventListener('change', update); update();
+
+  const close = () => { editingId = null; render(); };
+  const save = btn('Salvar', { kind: 'primary', sm: true, onclick: async () => {
+    if (!name.value.trim() || !goal.value.trim()) return toast('Informe o nome e o objetivo.', 'bad');
+    let alertCondition = { type: cond.value };
+    if (cond.value === 'below_value') {
+      if (!(Number(limit.value) > 0)) return toast('Informe o valor do alerta, maior que zero.', 'bad');
+      alertCondition = { type: 'below_value', value: Number(limit.value) };
+    }
+    try {
+      await api('PATCH', `/trackers/${t.id}`, { name: name.value.trim(), goal: goal.value.trim(), intervalMinutes: Number(freq.value), alertCondition, digest: digest.value });
+      toast('Acompanhamento atualizado.');
+      close();
+    } catch (e) { toast(e.message, 'bad'); }
+  } }, 'check');
+
+  return h('article', { class: 'card tracker' },
+    h('div', { class: 'tracker-head' }, h('div', { class: 'kind' }, icon('sliders')), h('div', { class: 'grow' }, h('div', { class: 'tracker-title' }, 'Editar acompanhamento'), h('div', { class: 'tracker-goal' }, 'As mudanças valem a partir da próxima verificação.'))),
+    h('div', { class: 'grid2' }, field('Nome', name), field('Frequência das verificações', freq)),
+    field('Objetivo (o que a IA deve procurar)', goal),
+    h('div', { class: 'grid2' }, field('Avisar quando', cond), limitField),
+    field('Resumo', digest),
+    estimate,
+    h('div', { class: 'tracker-foot' }, save, btn('Cancelar', { kind: 'ghost', sm: true, onclick: close })));
+}
+
 function trackerCard(t, last, stats) {
   const best = last?.findings?.filter((f) => f.found && f.value != null && f.confidence >= 0.6 && (!f.currency || f.currency === 'BRL')).sort((a, b) => a.value - b.value)[0];
   const nxt = nextCheck(t, last, lastStatus?.overLimit);
@@ -170,6 +217,7 @@ function trackerCard(t, last, stats) {
     last && !last.ok ? h('div', { class: 'alert' }, icon('alert'), h('span', {}, `Última verificação falhou: ${last.error}`)) : null,
     h('div', { class: 'tracker-foot' }, checkBtn,
       btn(t.status === 'active' ? 'Pausar' : 'Retomar', { sm: true, onclick: async () => { await api('PATCH', `/trackers/${t.id}`, { status: t.status === 'active' ? 'paused' : 'active' }); await render(); } }, t.status === 'active' ? 'pause' : 'play'),
+      btn('Editar', { sm: true, onclick: () => { editingId = t.id; render(); } }, 'sliders'),
       btn('Detalhes', { sm: true, onclick: () => viewDetail(t) }),
       result, h('span', { class: 'sp' }), armDelete));
 }
@@ -187,7 +235,7 @@ async function viewTrackers() {
   }
   const cards = await Promise.all(list.map(async (t) => {
     const [checks, stats] = await Promise.all([api('GET', `/trackers/${t.id}/checks?limit=1`).catch(() => []), api('GET', `/trackers/${t.id}/stats`).catch(() => undefined)]);
-    return trackerCard(t, checks[0], stats);
+    return editingId === t.id ? trackerEditor(t, stats) : trackerCard(t, checks[0], stats);
   }));
   return h('div', { class: 'page' }, head, h('div', { class: 'stack' }, cards));
 }
@@ -371,7 +419,7 @@ async function render(arg) {
     // redesenha só quando o estado do WhatsApp muda (ex.: QR → conectado), para não apagar o que o usuário digitou
     if (current === 'settings') pollTimer = setInterval(async () => { const st = await bt.status(); const now = st.ok ? st.data.whatsapp : 'down'; if (current === 'settings' && now !== settingsWa && !document.activeElement?.matches('input')) render(); }, 5000);
     // mantém "próxima consulta" e horários relativos atualizados
-    if (current === 'trackers') pollTimer = setInterval(() => { if (current === 'trackers' && !document.activeElement?.matches('button')) render(); }, 30000);
+    if (current === 'trackers') pollTimer = setInterval(() => { if (current === 'trackers' && editingId === null && !document.activeElement?.matches('button')) render(); }, 30000);
   } catch (e) {
     if (mine !== renderSeq) return;
     view.replaceChildren(h('div', { class: 'page' }, h('div', { class: 'alert' }, icon('alert'), h('span', {}, e.message))));
@@ -379,6 +427,7 @@ async function render(arg) {
 }
 function setView(name) {
   current = name;
+  editingId = null;
   document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
   render();
 }

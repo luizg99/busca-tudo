@@ -78,6 +78,21 @@ describe('api', () => {
     expect((await call('GET', '/trackers')).json).toHaveLength(0);
   });
 
+  it('PATCH edita frequência, condição de alerta e resumo; frequência < 15 min é recusada sem alterar nada', async () => {
+    const { call } = await start();
+    const id = (await call('POST', '/trackers', goodInput)).json.id;
+    const ok = await call('PATCH', `/trackers/${id}`, {
+      name: 'PS5 editado', intervalMinutes: 180, digest: 'weekly', alertCondition: { type: 'below_value', value: 3500 },
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.json).toMatchObject({ name: 'PS5 editado', intervalMinutes: 180, digest: 'weekly', alertCondition: { type: 'below_value', value: 3500 } });
+    const bad = await call('PATCH', `/trackers/${id}`, { intervalMinutes: 5 });
+    expect(bad.status).toBe(400);
+    expect(bad.raw).toContain('15');
+    expect((await call('GET', '/trackers')).json[0].intervalMinutes).toBe(180);
+    expect((await call('PATCH', '/trackers/9999', { intervalMinutes: 60 })).status).toBe(404);
+  });
+
   it('confirm sem proposta pendente devolve 409', async () => {
     const { call } = await start();
     expect((await call('POST', '/setup/s1/confirm')).status).toBe(409);
