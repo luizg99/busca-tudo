@@ -14,6 +14,7 @@ import type { LlmClient } from '../src/service/llm';
 import type { Finding, NewTracker, Tracker } from '../src/shared/types';
 
 const T = ['amazon.com.br', 'mercadolivre.com.br', 'kabum.com.br'];
+const ld = (price: number) => `<html><head><script type="application/ld+json">${JSON.stringify({ '@type': 'Product', name: 'PS5', offers: { '@type': 'Offer', price: String(price), priceCurrency: 'BRL', availability: 'https://schema.org/InStock' } })}</script></head><body>PS5</body></html>`;
 const f = (over: Partial<Finding> = {}): Finding => ({ found: true, value: 3524, currency: 'BRL', title: 'x', sourceUrl: 'https://www.ofertinha.com.br/ps5', evidence: 'e', confidence: 0.9, ...over });
 
 describe('normalizeDomain / isTrustedUrl', () => {
@@ -165,9 +166,9 @@ describe('pipeline: filtra por lojas confiáveis na descoberta', () => {
     const transport: Transport = { isReady: () => true, async sendToSelf(x) { sent.push(x); } };
     const now = () => new Date('2026-01-10T10:00:00Z');
     const fetched: string[] = [];
-    const pages: Record<string, string> = { [AMAZON]: page('3600,00'), [OFERTA]: `<a href="${GO}">comprar</a>${page('3524,00')}`, [DESC]: `<a href="${DESC}/comprar">comprar</a>${page('2000,00')}` };
+    const pages: Record<string, string> = { [AMAZON]: ld(3600), [OFERTA]: `<a href="${GO}">comprar</a>${page('3524,00')}`, [DESC]: `<a href="${DESC}/comprar">comprar</a>${page('2000,00')}` };
     const fetchPage = async (url: string): Promise<FetchResult> => { fetched.push(url); return pages[url] ? { ok: true, html: pages[url] } : { ok: false, kind: 'http', status: 404, message: '404' }; };
-    const resolveFinalUrl = async (url: string) => (url === GO ? ({ ok: true as const, finalUrl: 'https://www.amazon.com.br/dp/PS5?tag=x' }) : ({ ok: true as const, finalUrl: url }));
+    const resolveFinalUrl = async (url: string) => (url === GO ? ({ ok: true as const, finalUrl: AMAZON }) : ({ ok: true as const, finalUrl: url }));
     const items = [
       { found: true, value: 3600, currency: 'BRL', title: 'Amazon', source_url: AMAZON, evidence: 'e', confidence: 0.9, price_regex: REGEX },
       { found: true, value: 3524, currency: 'BRL', title: 'Ofertinha', source_url: OFERTA, store: 'Amazon', store_url: GO, coupon: 'PROMOAGORA', evidence: 'e', confidence: 0.9, price_regex: REGEX },
@@ -185,8 +186,9 @@ describe('pipeline: filtra por lojas confiáveis na descoberta', () => {
     const s = setup();
     const r = await runCheck(s.deps, s.t.id);
     expect(r.alerted).toBe(true);
-    expect(s.sent[0]).toContain('Menor achado: R$ 3.524,00');
-    expect(s.sent[0]).toContain('Cupom: PROMOAGORA');
+    expect(s.sent[0]).toContain('Menor achado: R$ 3.600,00'); // vale o preço lido na loja (a Amazon), não o do site de cupom
+    expect(s.sent[0]).toContain('Cupom: PROMOAGORA'); // o cupom do site de ofertas é mantido
+    expect(s.sent[0]).toContain('3.524,00'); // e o que o site informava
     expect(s.sent[0]).toContain('ofertinha.com.br');
     expect(s.sent[0]).not.toContain('2.000,00');
     const check = s.db.listChecks(s.t.id)[0];
@@ -194,21 +196,21 @@ describe('pipeline: filtra por lojas confiáveis na descoberta', () => {
     expect(ignored).toHaveLength(1);
     expect(ignored[0].sourceUrl).toBe(DESC);
     expect(ignored[0].ignoredReason).toMatch(/não leva a uma loja confiável/i);
-    expect(s.db.lastValue(s.t.id)).toBe(3524); // o ignorado (2000) não vira referência
+    expect(s.db.lastValue(s.t.id)).toBe(3600); // o ignorado (2000) não vira referência
   });
 
   it('só as ofertas aceitas viram fontes; a via loja confiável fica marcada como verificada', async () => {
     const s = setup();
     await runCheck(s.deps, s.t.id);
     const urls = s.db.listSources(s.t.id).map((x) => x.url).sort();
-    expect(urls).toEqual([AMAZON, OFERTA].sort());
-    expect(s.db.listSources(s.t.id).find((x) => x.url === OFERTA)!.trustedVia).toBe(true);
-    expect(s.db.listSources(s.t.id).find((x) => x.url === AMAZON)!.trustedVia).toBeFalsy();
+    expect(urls).toEqual([AMAZON]); // a oferta do site de cupom e a da Amazon acabam na mesma página da loja: a fonte é a loja
+    expect(s.db.listSources(s.t.id)[0].origin).toMatchObject({ via: 'ofertinha.com.br', coupon: 'PROMOAGORA' });
   });
 
   it('a rotina só lê fontes de lojas confiáveis ou verificadas; fonte de site desconhecido sem verificação é pulada', async () => {
     const s = setup();
     await runCheck(s.deps, s.t.id);
+    s.db.upsertSource(s.t.id, { url: OFERTA, label: 'Ofertinha', status: 'ok', lastValue: 3524, rule: { type: 'regex', pattern: REGEX }, trustedVia: true }); // verificada como via loja confiável
     s.db.upsertSource(s.t.id, { url: DESC, label: 'Loja X', status: 'ok', lastValue: 2000, rule: { type: 'regex', pattern: REGEX } });
     s.fetched.length = 0;
     const later = { ...s.deps, now: () => new Date('2026-01-10T11:05:00Z') };

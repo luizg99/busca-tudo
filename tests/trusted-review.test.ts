@@ -16,6 +16,7 @@ import type { LlmClient } from '../src/service/llm';
 import type { Finding, NewTracker } from '../src/shared/types';
 
 const T = ['amazon.com.br', 'kabum.com.br'];
+const ldPage = (price: number) => `<html><head><script type="application/ld+json">${JSON.stringify({ '@type': 'Product', name: 'PS5', offers: { '@type': 'Offer', price: String(price), priceCurrency: 'BRL', availability: 'https://schema.org/InStock' } })}</script></head><body>PS5</body></html>`;
 const f = (over: Partial<Finding> = {}): Finding => ({ found: true, value: 3524, currency: 'BRL', title: 'x', sourceUrl: 'https://www.ofertinha.com.br/ps5', evidence: 'e', confidence: 0.9, ...over });
 const never = async () => { throw new Error('não devia seguir link'); };
 
@@ -121,12 +122,14 @@ describe('pipeline: limite de conferências, paralelo e cupom na rotina', () => 
     const items = Array.from({ length: 4 }, (_, i) => ({ found: true, value: 3500 + i, currency: 'BRL', title: `O${i}`, source_url: `https://blog${i}.com/ps5`, store: 'Amazon', store_url: `https://blog${i}.com/go`, evidence: 'e', confidence: 0.9 }));
     const pages: Record<string, string> = {};
     for (let i = 0; i < 4; i++) pages[`https://blog${i}.com/ps5`] = `<a href="https://blog${i}.com/go">x</a> R$ 3500`;
+    pages[AMZ] = ldPage(3500);
     let inFlight = 0; let max = 0;
     const s = setup(items, pages, async (u) => {
       inFlight++; max = Math.max(max, inFlight);
       await new Promise((r) => setTimeout(r, 20));
       inFlight--;
-      return { ok: true, finalUrl: AMZ + '?from=' + encodeURIComponent(u) };
+      void u;
+      return { ok: true, finalUrl: AMZ };
     });
     await runCheck(s.deps, s.t.id);
     expect(max).toBeGreaterThan(1);
@@ -137,6 +140,7 @@ describe('pipeline: limite de conferências, paralelo e cupom na rotina', () => 
     const items = Array.from({ length: 9 }, (_, i) => ({ found: true, value: 3500 + i, currency: 'BRL', title: `O${i}`, source_url: `https://blog${i}.com/ps5`, store: 'Amazon', store_url: AMZ, evidence: 'e', confidence: 0.9 }));
     const pages: Record<string, string> = {};
     for (let i = 0; i < 9; i++) pages[`https://blog${i}.com/ps5`] = `<a href="${AMZ}">x</a> R$ 3500`;
+    pages[AMZ] = ldPage(3500);
     const s = setup(items, pages);
     await runCheck(s.deps, s.t.id);
     const ignored = s.db.listChecks(s.t.id)[0].findings.filter((x) => x.ignoredReason);
@@ -146,10 +150,10 @@ describe('pipeline: limite de conferências, paralelo e cupom na rotina', () => 
 
   it('#6 a rotina por código mantém loja, cupom e link da loja da oferta achada via site', async () => {
     const item = { found: true, value: 3524, currency: 'BRL', title: 'Ofertinha', source_url: OFERTA, store: 'Amazon', store_url: GO, coupon: 'PROMOAGORA (Pix)', evidence: 'e', confidence: 0.9, price_regex: REGEX };
-    const s = setup([item], { [OFERTA]: html('3524,00') });
-    await runCheck(s.deps, s.t.id); // descoberta: baseline
+    const s = setup([item], { [OFERTA]: html('3524,00'), [AMZ]: ldPage(3524) });
+    await runCheck(s.deps, s.t.id); // descoberta: baseline (preço lido na Amazon)
     s.advance(65);
-    s.pages[OFERTA] = html('3400,00');
+    s.pages[AMZ] = ldPage(3400);
     const r = await runCheck(s.deps, s.t.id);
     expect(r.alerted).toBe(true);
     expect(s.db.listChecks(s.t.id)[0].mode).toBe('routine');

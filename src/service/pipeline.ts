@@ -7,6 +7,7 @@ import { fetchPage as defaultFetchPage, resolveFinalUrl as defaultResolveFinalUr
 import type { LlmClient } from './llm';
 import type { Notifier } from './notifier';
 import { learnSources, readSource } from './sources';
+import { verifyAtDestination } from './destination';
 import { classifyFinding, extractLinks, getTrustedSites, isTrustedUrl, type PageLinks, type ResolveFinalUrl } from './trust';
 
 /** Cada conferência de link de saída espera pouco: são várias em paralelo e a verificação inteira não pode travar. */
@@ -255,6 +256,13 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
       findings = await applyTrust(outcome.findings, trustedSites, resolve, pageLinks);
     } else {
       findings = outcome.findings;
+    }
+    if (tracker.kind === 'price') {
+      // o preço que vale é o da página da loja de destino (site de cupom pode estar desatualizado)
+      const cacheResolve = deps.resolveFinalUrl ?? ((u: string) => defaultResolveFinalUrl(u, { timeoutMs: TRUST_RESOLVE_TIMEOUT_MS }));
+      const verified = await verifyAtDestination(findings, { fetchPage, resolve: cacheResolve, llm, model: models.routine, tracker, trusted: trustedSites });
+      findings = verified.findings;
+      usages.push(...verified.usages);
     }
     if (tracker.kind === 'price') {
       // aprender fontes é um extra: um erro aqui não pode perder o check nem o custo da busca (e causar nova busca em seguida)

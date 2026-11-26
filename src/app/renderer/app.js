@@ -289,7 +289,10 @@ async function viewDetail(t, focusId) {
       h('span', { class: 'val' }, f.found ? (f.value != null ? money(f.value, f.currency) : '—') : 'nada'),
       h('div', { class: 'info' }, h('div', {}, f.found ? (f.title || f.evidence || '') : f.evidence), f.sourceUrl ? h('div', {}, link(f.sourceUrl)) : null,
         f.ignoredReason ? h('div', { class: 'warn small' }, `Ignorada: ${f.ignoredReason}`) : null,
-        f.coupon ? h('div', { class: 'small' }, `Cupom: ${f.coupon}`) : null),
+        f.coupon ? h('div', { class: 'small' }, `Cupom: ${f.coupon}`) : null,
+        f.claimedValue != null ? h('div', { class: 'muted small' }, `O site da oferta informava ${money(f.claimedValue, f.currency)}; vale o preço lido na loja.`) : null,
+        f.unverified ? h('div', { class: 'warn small' }, 'Preço não conferido na página da loja (informado pela busca).') : null),
+      f.unverified ? badge('não conferido', 'warn') : null,
       f.payment ? badge(payLabel(f.payment, f.paymentNote), f.payment === 'vista' ? 'ok' : 'warn') : null,
       f.ignoredReason ? badge('ignorada', 'warn') : f.via ? badge(`via ${f.via}${f.store ? ` · ${f.store}` : ''}`, 'accent') : null,
       f.found ? badge(`${Math.round(f.confidence * 100)}%`, f.confidence >= 0.6 ? 'ok' : 'warn') : null))));

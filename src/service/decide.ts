@@ -147,6 +147,8 @@ export function decideAlert(t: Tracker, findings: Finding[], ctx: DecisionContex
   }
   // loja que vende e onde a oferta foi achada (ex.: "Amazon · achado em ofertinha.com.br") e o cupom, se houver
   if (best.store || best.via) lines.push(`Loja: ${best.store ?? best.via}${best.via ? ` · achado em ${best.via}` : ''}`);
+  if (best.claimedValue !== undefined) lines.push(`O site da oferta informava ${brl(best.claimedValue, best.currency)}; vale o preço lido na loja.`);
+  if (best.unverified) lines.push('⚠️ Preço não conferido na página da loja (informado pela busca).');
   const pay = paymentLabel(best);
   if (pay) lines.push(`Pagamento: ${pay}`);
   if (best.coupon) lines.push(`Cupom: ${best.coupon}`);

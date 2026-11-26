@@ -40,6 +40,10 @@ export interface Finding {
   storeUrl?: string;
   /** Cupom e condições, se a oferta depender de um. */
   coupon?: string;
+  /** Valor que a busca informou (ex.: o do site de cupom) quando o preço lido na loja é outro. */
+  claimedValue?: number;
+  /** Preenchido pelo app: o preço não pôde ser conferido na página da loja (vale o informado pela busca). */
+  unverified?: boolean;
   /** Como o preço informado é pago: 'vista' (total à vista, Pix/boleto) ou 'parcelado' (só no cartão parcelado). */
   payment?: 'vista' | 'parcelado';
   /** Detalhe do pagamento, ex.: "Pix" ou "10x sem juros no cartão". */
