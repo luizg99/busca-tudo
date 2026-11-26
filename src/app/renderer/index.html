@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'" />
+  <title>busca-tudo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="statusbar">
+    <strong class="brand">busca-tudo</strong>
+    <span id="st-service" class="pill">serviço…</span>
+    <span id="st-whatsapp" class="pill">WhatsApp…</span>
+    <span id="st-key" class="pill">chave…</span>
+    <span id="st-limit" class="pill warn hidden">limite de custo atingido</span>
+  </header>
+  <div id="banner" class="banner hidden">
+    <span id="banner-text"></span>
+    <button id="banner-btn" class="primary hidden">Iniciar serviço</button>
+  </div>
+  <div id="layout">
+    <nav id="nav">
+      <button data-view="trackers" class="active">Acompanhamentos</button>
+      <button data-view="chat">Novo acompanhamento</button>
+      <button data-view="reports">Relatórios</button>
+      <button data-view="settings">Configurações</button>
+    </nav>
+    <main id="view"></main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
