@@ -75,3 +75,14 @@ describe('Notifier', () => {
     expect(db.pendingAlerts().map((x) => x.text)).toEqual(['a']);
   });
 });
+
+describe('Notifier.sendInfo', () => {
+  it('envia texto avulso sem gravar alerta e informa se entregou', async () => {
+    const { notifier, db, sent, state } = setup();
+    expect(await notifier.sendInfo('resumo')).toBe(true);
+    expect(sent).toEqual(['resumo']);
+    expect(db.pendingAlerts()).toHaveLength(0);
+    state.ready = false;
+    expect(await notifier.sendInfo('outro')).toBe(false);
+  });
+});

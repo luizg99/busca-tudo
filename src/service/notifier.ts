@@ -29,6 +29,17 @@ export class Notifier {
     }
   }
 
+  /** Texto avulso (ex.: resumo periódico): não vira alerta nem fica pendente. */
+  async sendInfo(text: string): Promise<boolean> {
+    if (!this.transport.isReady()) return false;
+    try {
+      await this.transport.sendToSelf(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async flushPending(): Promise<number> {
     if (this.flushing || !this.transport.isReady()) return 0;
     this.flushing = true;
