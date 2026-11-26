@@ -25,8 +25,9 @@ Método:
 2. Cruze pelo menos 2 fontes sempre que possível e prefira fontes confiáveis.
 3. Descarte resultados que violem os critérios (outro modelo, usado, anúncio suspeito, preço implausível).
 4. Responda apenas com JSON no formato:
-{"findings":[{"found":true|false,"value":<número, sem símbolo de moeda>,"currency":"BRL","title":"...","source_url":"https://...","evidence":"por que este resultado vale","confidence":<0 a 1>}]}
+{"findings":[{"found":true|false,"value":<número, sem símbolo de moeda>,"currency":"BRL","title":"...","source_url":"https://...","evidence":"por que este resultado vale","confidence":<0 a 1>,"price_regex":"..."}]}
 Se nada relevante for encontrado, responda {"findings":[{"found":false,"evidence":"o que foi procurado","confidence":0.9}]}.
+"price_regex" é uma expressão regular (sintaxe JavaScript, sem barras, case-insensitive) com UM grupo de captura, aplicada ao TEXTO visível da página (sem HTML), que captura o preço do produto exatamente como escrito na página, ancorada no nome do produto ou em palavras próximas (ex.: "Digital.{0,40}?R\\$\\s*([\\d.,]+)\\s*no pix"). Lembre de escapar as barras invertidas no JSON. Use null se não tiver certeza.
 "confidence" reflete o quanto você tem certeza de que o resultado atende ao objetivo e aos critérios.`;
 
 function buildPrompt(t: Tracker): string {
@@ -64,6 +65,7 @@ function normalize(raw: any): Finding {
     ...(typeof raw.currency === 'string' ? { currency: raw.currency } : {}),
     ...(typeof raw.title === 'string' ? { title: raw.title } : {}),
     ...(typeof raw.source_url === 'string' ? { sourceUrl: raw.source_url } : {}),
+    ...(typeof raw.price_regex === 'string' && raw.price_regex.length > 0 && raw.price_regex.length <= 400 ? { priceRegex: raw.price_regex } : {}),
     evidence: typeof raw.evidence === 'string' ? raw.evidence : '',
     confidence,
   };

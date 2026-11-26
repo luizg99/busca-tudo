@@ -51,6 +51,22 @@ describe('runSmartCheck', () => {
     expect((await runSmartCheck(llm, tracker, models)).findings).toHaveLength(1);
   });
 
+  it('pede à IA a regra de leitura (price_regex) e a preserva no achado', async () => {
+    const { llm, calls } = fakeLlm([reply([item({ price_regex: 'Digital.{0,20}?R\\$\\s*([\\d.,]+)\\s*no pix' })])]);
+    const out = await runSmartCheck(llm, tracker, models);
+    expect(calls[0].system).toMatch(/price_regex/);
+    expect(calls[0].system).toMatch(/um grupo de captura|1 grupo de captura/i);
+    // o exemplo de regex precisa chegar à IA com as barras invertidas intactas (R\$\s*([\d.,]+))
+    expect(calls[0].system).toContain('R\\$\\s*([\\d.,]+)');
+    expect(out.findings[0].priceRegex).toBe('Digital.{0,20}?R\\$\\s*([\\d.,]+)\\s*no pix');
+  });
+
+  it('price_regex ausente, não-texto ou gigante é ignorado', async () => {
+    const { llm } = fakeLlm([reply([item(), item({ price_regex: 123 }), item({ price_regex: 'x'.repeat(1000) })])]);
+    const out = await runSmartCheck(llm, tracker, models);
+    expect(out.findings.map((f) => f.priceRegex)).toEqual([undefined, undefined, undefined]);
+  });
+
   it('JSON inválido ou sem findings vira CheckError', async () => {
     await expect(runSmartCheck(fakeLlm(['não sei']).llm, tracker, models)).rejects.toBeInstanceOf(CheckError);
     await expect(runSmartCheck(fakeLlm(['{"foo":1}']).llm, tracker, models)).rejects.toBeInstanceOf(CheckError);

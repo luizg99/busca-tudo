@@ -29,7 +29,7 @@ const base = (over: Record<string, unknown> = {}) => ({ tracker, model: 'claude-
 
 describe('applyRule', () => {
   it('regex: captura o preço no texto visível', () => {
-    expect(applyRule({ type: 'regex', pattern: 'Digital[^R]*R\\$\\s*([\\d.,]+)\\s*no pix' }, PAGE_TEXT)).toBe(3524);
+    expect(applyRule({ type: 'regex', pattern: 'Digital.{0,20}?R\\$\\s*([\\d.,]+)\\s*no pix' }, PAGE_TEXT)).toBe(3524);
   });
   it('regex inválida, sem captura ou preço absurdo devolve undefined sem lançar', () => {
     expect(applyRule({ type: 'regex', pattern: '([' }, PAGE_TEXT)).toBeUndefined();
@@ -44,7 +44,13 @@ describe('applyRule', () => {
 describe('plausible', () => {
   it('aceita até 40% de variação sobre o último valor; sem último valor aceita qualquer positivo', () => {
     expect(plausible(3600, 3500)).toBe(true);
-    expect(plausible(2200, 3500)).toBe(false); // -37% ok? abaixo
+    expect(plausible(2200, 3500)).toBe(true); // -37%
+    expect(plausible(4800, 3500)).toBe(true); // +37%
+    expect(plausible(1800, 3500)).toBe(false); // -49%
+    expect(plausible(5000, 3500)).toBe(false); // +43%
+    expect(plausible(100, undefined)).toBe(true);
+    expect(plausible(0, 3500)).toBe(false);
+    expect(plausible(-5, undefined)).toBe(false);
   });
 });
 
@@ -52,7 +58,7 @@ describe('readSource', () => {
   it('plano A: regra aprendida lê o preço sem chamar a IA', async () => {
     const { llm, chat } = llmReturning('{"value": 1}');
     const r = await readSource({ ...base(), fetchPage: fetcher({ 'https://l/a': PAGE_TEXT }), llm },
-      { url: 'https://l/a', label: 'Loja A', rule: { type: 'regex', pattern: 'Digital[^R]*R\\$\\s*([\\d.,]+)\\s*no pix' } });
+      { url: 'https://l/a', label: 'Loja A', rule: { type: 'regex', pattern: 'Digital.{0,20}?R\\$\\s*([\\d.,]+)\\s*no pix' } });
     expect(r.result).toMatchObject({ ok: true, method: 'rule', value: 3524, url: 'https://l/a' });
     expect(r.usages).toEqual([]);
     expect(chat).not.toHaveBeenCalled();
@@ -117,7 +123,7 @@ describe('learnSources', () => {
 
   it('guarda a regra da IA quando ela reproduz o preço que a IA viu', async () => {
     const { db, t, deps } = setup({ 'https://l/a': PAGE_TEXT });
-    await learnSources(deps(), t, [f({ priceRegex: 'Digital[^R]*R\\$\\s*([\\d.,]+)\\s*no pix' })]);
+    await learnSources(deps(), t, [f({ priceRegex: 'Digital.{0,20}?R\\$\\s*([\\d.,]+)\\s*no pix' })]);
     const s = db.listSources(t.id)[0];
     expect(s).toMatchObject({ url: 'https://l/a', label: 'Loja A', status: 'ok', rule: { type: 'regex' }, lastValue: 3524 });
   });
