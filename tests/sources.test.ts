@@ -64,10 +64,10 @@ describe('readSource', () => {
     expect(chat).not.toHaveBeenCalled();
   });
 
-  it('plano A: se a regra quebrou, usa os dados estruturados da página', async () => {
+  it('plano A: se a regra quebrou e o aprendizado confirmou os dados estruturados (genericOk), usa-os', async () => {
     const { llm, chat } = llmReturning('{"value": 1}');
     const r = await readSource({ ...base(), fetchPage: fetcher({ 'https://l/a': PAGE_LD }), llm },
-      { url: 'https://l/a', rule: { type: 'regex', pattern: 'sumiu\\s*([\\d,]+)' } });
+      { url: 'https://l/a', rule: { type: 'regex', pattern: 'sumiu\\s*([\\d,]+)', genericOk: true } });
     expect(r.result).toMatchObject({ ok: true, method: 'generic', value: 3524 });
     expect(chat).not.toHaveBeenCalled();
   });
@@ -148,10 +148,10 @@ describe('learnSources', () => {
     expect(db.listSources(t.id)[0]).toMatchObject({ status: 'unreadable', lastError: expect.stringContaining('JavaScript') });
   });
 
-  it('página bloqueada na hora de aprender vira "unreadable" com o motivo do site', async () => {
+  it('página bloqueada na hora de aprender (falha passageira) fica "failing" com o motivo do site, para a rotina tentar de novo', async () => {
     const { db, t, deps } = setup({ 'https://l/a': { ok: false, kind: 'blocked', status: 429, message: 'O site bloqueou o acesso automático (HTTP 429).' } });
     await learnSources(deps(), t, [f()]);
-    expect(db.listSources(t.id)[0]).toMatchObject({ status: 'unreadable', lastError: expect.stringContaining('bloqueou') });
+    expect(db.listSources(t.id)[0]).toMatchObject({ status: 'failing', lastError: expect.stringContaining('bloqueou') });
   });
 
   it('ignora achados de baixa confiança, sem URL ou em outra moeda; limita a 4 fontes', async () => {

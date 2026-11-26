@@ -295,10 +295,11 @@ export function openDb(path: string) {
       const existing = raw.prepare('SELECT * FROM sources WHERE tracker_id = ? AND url = ?').get(trackerId, s.url) as any;
       if (existing) {
         raw
-          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ?, failing_since = ? WHERE id = ?')
+          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ?, failing_since = ?, last_notified_at = ? WHERE id = ?')
           .run(s.label ?? existing.label, s.rule ? JSON.stringify(s.rule) : existing.rule_json, s.status,
             s.lastValue ?? existing.last_value, s.status === 'ok' ? null : s.lastError ?? existing.last_error,
-            s.status === 'ok' ? 0 : existing.consecutive_failures, s.status === 'ok' ? null : existing.failing_since, existing.id);
+            s.status === 'ok' ? 0 : existing.consecutive_failures, s.status === 'ok' ? null : existing.failing_since,
+            s.status === 'ok' ? null : existing.last_notified_at, existing.id); // voltou a funcionar: um problema futuro é um episódio novo
         return api.getSource(existing.id)!;
       }
       const info = raw
@@ -317,13 +318,17 @@ export function openDb(path: string) {
     recordSourceResult(id: number, r: { ok: boolean; method?: ReadMethod; value?: number; error?: string; at: string }): void {
       if (r.ok) {
         raw
-          .prepare("UPDATE sources SET status = 'ok', consecutive_failures = 0, method = ?, last_value = ?, last_ok_at = ?, last_error = NULL, failing_since = NULL WHERE id = ?")
+          .prepare("UPDATE sources SET status = 'ok', consecutive_failures = 0, method = ?, last_value = ?, last_ok_at = ?, last_error = NULL, failing_since = NULL, last_notified_at = NULL WHERE id = ?")
           .run(r.method ?? null, r.value ?? null, r.at, id);
       } else {
         raw
           .prepare("UPDATE sources SET status = 'failing', consecutive_failures = consecutive_failures + 1, last_fail_at = ?, last_error = ?, failing_since = COALESCE(failing_since, ?) WHERE id = ?")
           .run(r.at, r.error ?? null, r.at, id);
       }
+    },
+    /** Apaga as fontes aprendidas (ex.: quando o acompanhamento muda de produto). */
+    deleteSources(trackerId: number): void {
+      raw.prepare('DELETE FROM sources WHERE tracker_id = ?').run(trackerId);
     },
     markSourceNotified(id: number, at: string): void {
       raw.prepare('UPDATE sources SET last_notified_at = ? WHERE id = ?').run(at, id);

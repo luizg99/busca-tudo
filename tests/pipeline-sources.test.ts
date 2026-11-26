@@ -180,7 +180,7 @@ describe('pipeline: falhas de site e aviso no WhatsApp', () => {
     expect(s.sent[0]).toMatch(/busca completa/);
   });
 
-  it('não repete o aviso do mesmo site em 24 h, e repete depois disso', async () => {
+  it('não repete o aviso do mesmo site enquanto o problema continua; só lembra depois de 7 dias', async () => {
     const s = await twoSources();
     s.pages['https://l/b'] = blocked;
     await runCheck(s.deps, s.t.id); s.advance(60);
@@ -188,11 +188,16 @@ describe('pipeline: falhas de site e aviso no WhatsApp', () => {
     s.pages['https://l/a'] = page('3524,00');
     await runCheck(s.deps, s.t.id); s.advance(60);
     await runCheck(s.deps, s.t.id);
-    expect(s.sent).toHaveLength(1);
-    s.advance(24 * 60);
+    const siteWarnings = () => s.sent.filter((m) => m.includes('não consegui ler'));
+    expect(siteWarnings()).toHaveLength(1);
+    s.advance(24 * 60); // um dia depois: continua sem repetir
     s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3524, label: 'Loja A' }]));
     await runCheck(s.deps, s.t.id);
-    expect(s.sent).toHaveLength(2);
+    expect(siteWarnings()).toHaveLength(1);
+    s.advance(7 * 24 * 60); // passou a semana: lembrete
+    s.searchScript.push(discoveryJson([{ url: 'https://l/a', value: 3524, label: 'Loja A' }]));
+    await runCheck(s.deps, s.t.id);
+    expect(siteWarnings()).toHaveLength(2);
   });
 
   it('o aviso de site com problema não conta como alerta de preço (nem aparece como queda)', async () => {

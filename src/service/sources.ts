@@ -21,6 +21,9 @@ export function plausible(value: number, lastValue: number | undefined): boolean
 
 const MAX_TEXT_CHARS = 300_000;
 const REGEX_TIMEOUT_MS = 150;
+/** Padrões que já estouraram o limite de tempo (em memória; recomeça a cada partida do serviço). */
+const slowPatterns = new Set<string>();
+const MAX_SLOW_PATTERNS = 500;
 /** Um único ambiente isolado reaproveitado em todas as chamadas (criar um por chamada é lento). */
 const sandbox = vm.createContext({ re: undefined as unknown, text: '' });
 
@@ -33,20 +36,23 @@ const SMALL_REPEAT_MAX = 3;
  * - `variable`: a largura do que ele casa varia (*, +, {n,} ou {n,m} com m > n e m > 3). É o que importa DENTRO do
  *   grupo: largura fixa ({4}) é segura; {1,50} não é.
  */
-function quantifierAt(p: string, i: number): { wide: boolean; variable: boolean; length: number } {
+function quantifierAt(p: string, i: number): { wide: boolean; variable: boolean; unbounded: boolean; length: number } {
   const c = p[i];
-  if (c === '*' || c === '+') return { wide: true, variable: true, length: p[i + 1] === '?' ? 2 : 1 };
-  if (c === '?') return { wide: false, variable: false, length: p[i + 1] === '?' ? 2 : 1 };
+  if (c === '*' || c === '+') return { wide: true, variable: true, unbounded: true, length: p[i + 1] === '?' ? 2 : 1 };
+  if (c === '?') return { wide: false, variable: false, unbounded: false, length: p[i + 1] === '?' ? 2 : 1 };
   if (c === '{') {
     const m = /^\{(\d+)(,(\d*))?\}/.exec(p.slice(i, i + 16));
     if (m) {
       const min = Number(m[1]);
       const max = m[2] === undefined ? min : m[3] === '' ? Infinity : Number(m[3]);
-      return { wide: max > SMALL_REPEAT_MAX, variable: max > min && max > SMALL_REPEAT_MAX, length: m[0].length + (p[i + m[0].length] === '?' ? 1 : 0) };
+      return { wide: max > SMALL_REPEAT_MAX, variable: max > min && max > SMALL_REPEAT_MAX, unbounded: max === Infinity, length: m[0].length + (p[i + m[0].length] === '?' ? 1 : 0) };
     }
   }
-  return { wide: false, variable: false, length: 0 };
+  return { wide: false, variable: false, unbounded: false, length: 0 };
 }
+
+/** Mais quantificadores sem limite que isso num mesmo padrão = custo polinomial alto ((.*)(.*)(.*)...x). */
+const MAX_UNBOUNDED_QUANTIFIERS = 5;
 
 /**
  * Detecta padrões com risco de backtracking catastrófico (ReDoS): grupo que contém repetição de largura variável (em
@@ -56,6 +62,7 @@ function quantifierAt(p: string, i: number): { wide: boolean; variable: boolean;
 export function isRiskyPattern(pattern: string): boolean {
   type Group = { variable: boolean; alt: boolean };
   const stack: Group[] = [];
+  let unboundedCount = 0;
   let i = 0;
   while (i < pattern.length) {
     const c = pattern[i];
@@ -84,6 +91,7 @@ export function isRiskyPattern(pattern: string): boolean {
       i++;
       const q = quantifierAt(pattern, i);
       i += q.length;
+      if (q.unbounded && ++unboundedCount > MAX_UNBOUNDED_QUANTIFIERS) return true;
       if (g) {
         if (q.wide && (g.variable || g.alt)) return true; // largura variável (ou alternância) dentro de grupo repetido muitas vezes
         const parent = stack[stack.length - 1];
@@ -101,6 +109,7 @@ export function isRiskyPattern(pattern: string): boolean {
     }
     if (c === '*' || c === '+' || c === '{') {
       const q = quantifierAt(pattern, i);
+      if (q.unbounded && ++unboundedCount > MAX_UNBOUNDED_QUANTIFIERS) return true;
       if (q.variable && stack.length) stack[stack.length - 1].variable = true;
       i += q.length || 1;
       continue;
@@ -118,13 +127,18 @@ export function isRiskyPattern(pattern: string): boolean {
 export function applyRule(rule: PriceRule, html: string): number | undefined {
   if (rule.type === 'generic') return extractGenericPrice(html);
   if (!rule.pattern || rule.pattern.length > MAX_PATTERN_LENGTH) return undefined;
-  if (isRiskyPattern(rule.pattern)) return undefined;
+  if (slowPatterns.has(rule.pattern) || isRiskyPattern(rule.pattern)) return undefined;
   try {
     sandbox.re = new RegExp(rule.pattern, 'i');
     sandbox.text = htmlToText(html).slice(0, MAX_TEXT_CHARS);
     const m = vm.runInContext('re.exec(text)', sandbox, { timeout: REGEX_TIMEOUT_MS }) as RegExpExecArray | null;
     return m && m[1] !== undefined ? parsePrice(m[1]) : undefined;
-  } catch {
+  } catch (e) {
+    // um padrão que estourou o tempo é lembrado: não gasta mais esse tempo em cada verificação
+    if ((e as NodeJS.ErrnoException).code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+      if (slowPatterns.size >= MAX_SLOW_PATTERNS) slowPatterns.clear();
+      slowPatterns.add(rule.pattern);
+    }
     return undefined;
   } finally {
     sandbox.re = undefined;
@@ -181,14 +195,23 @@ export async function readSource(deps: ReaderDeps, source: SourceInfo): Promise<
   if (!page.ok) return fail(page.message);
   const html = page.html;
 
-  // Plano A: regra aprendida e, depois, dados estruturados.
+  const suspect = (value: number) => ({
+    result: { ...meta, ok: false, suspectValue: value, error: `Leu R$ ${value.toFixed(2).replace('.', ',')}, valor fora do esperado em relação ao último preço (pede confirmação pela busca completa).` } as SourceResult,
+    usages,
+  });
+
+  // Plano A: regra aprendida e, como reserva, os dados estruturados SÓ se o aprendizado confirmou que reproduzem o preço
+  // (senão a página pode publicar um preço de tabela diferente do preço de venda que acompanhamos).
   if (source.rule) {
     const v = applyRule(source.rule, html);
-    if (v !== undefined && plausible(v, deps.lastValue)) return done(source.rule.type === 'generic' ? 'generic' : 'rule', v);
-  }
-  if (source.rule?.type !== 'generic') {
-    const g = extractGenericPrice(html);
-    if (g !== undefined && plausible(g, deps.lastValue)) return done('generic', g);
+    if (v !== undefined) {
+      if (plausible(v, deps.lastValue)) return done(source.rule.type === 'generic' ? 'generic' : 'rule', v);
+      return suspect(v); // lido, mas fora do esperado: confirmar, não gastar IA
+    }
+    if (source.rule.type === 'regex' && source.rule.genericOk) {
+      const g = extractGenericPrice(html);
+      if (g !== undefined) return plausible(g, deps.lastValue) ? done('generic', g) : suspect(g);
+    }
   }
 
   // Plano B: a IA lê só alguns trechos do texto da página.
@@ -214,18 +237,20 @@ export async function readSource(deps: ReaderDeps, source: SourceInfo): Promise<
   usages.push(reply.usage);
   const value = parseAiValue(reply.text);
   if (value === undefined || value === null) return fail('A IA não encontrou o preço do produto nos trechos da página.');
-  if (!plausible(value, deps.lastValue)) return fail(`A IA leu R$ ${value.toFixed(2).replace('.', ',')}, valor fora do esperado em relação ao último preço.`);
+  if (!plausible(value, deps.lastValue)) return suspect(value);
   return done('ai', value);
 }
 
 function valueInText(text: string, value: number): boolean {
   const fixed = value.toFixed(2);
   const [int, dec] = fixed.split('.');
-  const plain = `${int},${dec}`;
-  const thousands = `${int.replace(/\B(?=(\d{3})+(?!\d))/g, '.')},${dec}`;
+  const thousandsInt = int.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // fronteiras: 299,00 não vale dentro de 1.299,00 nem de 2299,00
-  return [plain, thousands].some((n) => new RegExp(`(?<![\\d.,])${escape(n)}(?!\\d)`).test(text));
+  const withCents = [`${int},${dec}`, `${thousandsInt},${dec}`].map((n) => `(?<![\\d.,])${escape(n)}(?!\\d)`);
+  // preço inteiro sem centavos ("R$ 3.499"): aceita também seguido de ",00", mas não de outros centavos
+  const whole = Number.isInteger(value) ? [int, thousandsInt].map((n) => `(?<![\\d.,])${escape(n)}(?!\\d)(?!,[1-9])`) : [];
+  return [...withCents, ...whole].some((p) => new RegExp(p).test(text));
 }
 
 export interface LearnDeps {
@@ -254,14 +279,22 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
     const alreadyUsable = known !== undefined && known.status !== 'unreadable';
     const page = await deps.fetchPage(url);
     if (!page.ok) {
-      if (!alreadyUsable) deps.db.upsertSource(tracker.id, { url, label, status: 'unreadable', lastError: page.message });
+      // Falha passageira (timeout, rede, bloqueio, erro do servidor) não diz nada sobre a página: a fonte fica como
+      // "failing" e a rotina tenta de novo. Só é "unreadable" quando a falha é definitiva (página inexistente/inválida).
+      const transient = page.kind === 'timeout' || page.kind === 'network' || page.kind === 'blocked' || (page.kind === 'http' && (page.status ?? 0) >= 500);
+      if (!alreadyUsable) deps.db.upsertSource(tracker.id, { url, label, status: transient ? 'failing' : 'unreadable', lastError: page.message });
       continue;
     }
     const close = (v: number | undefined) => v !== undefined && Math.abs(v - value) / value <= LEARN_TOLERANCE;
 
     if (f.priceRegex) {
       const rule: PriceRule = { type: 'regex', pattern: f.priceRegex };
-      if (close(applyRule(rule, page.html))) { deps.db.upsertSource(tracker.id, { url, label, rule, status: 'ok', lastValue: value }); continue; }
+      if (close(applyRule(rule, page.html))) {
+        // se os dados estruturados também reproduzem o preço, servem de reserva quando a regra quebrar
+        if (close(extractGenericPrice(page.html))) rule.genericOk = true;
+        deps.db.upsertSource(tracker.id, { url, label, rule, status: 'ok', lastValue: value });
+        continue;
+      }
     }
     if (close(extractGenericPrice(page.html))) {
       deps.db.upsertSource(tracker.id, { url, label, rule: { type: 'generic' }, status: 'ok', lastValue: value });

@@ -35,8 +35,15 @@ export const RETRY_AFTER_FAILED_SEARCH_HOURS = 1;
 export const MANUAL_RETRY_MINUTES = 2;
 /** Quantas falhas seguidas de um site antes de avisar no WhatsApp. */
 export const WARN_AFTER_FAILURES = 2;
-/** Intervalo mínimo entre dois avisos sobre o mesmo site. */
-export const WARN_COOLDOWN_HOURS = 24;
+/**
+ * Um aviso por episódio de problema de um site. Se uma FALHA continuar por mais que isso, vem um lembrete. Site que o
+ * código não lê (ilegível) avisa uma vez só. Voltar a funcionar encerra o episódio.
+ */
+export const WARN_REMINDER_DAYS = 7;
+/** Uma leitura fora do esperado só pede a busca completa de confirmação se a última foi há mais que isso. */
+export const SUSPECT_CONFIRM_MIN_HOURS = 1;
+/** Valores de fontes sem leitura boa há mais que isso deixam de servir de referência para o alerta. */
+const BASELINE_STALE_HOURS = 48;
 
 /** Acompanhamentos em verificação agora: impede o agendador e o "Verificar agora" de rodarem o mesmo ao mesmo tempo. */
 const running = new Set<number>();
@@ -69,14 +76,17 @@ function snapshot(sources: SourceRow[]): SourceResult[] {
     : { sourceId: s.id, url: s.url, label: s.label, ok: true, value: s.lastValue, method: s.rule?.type === 'regex' ? 'rule' : s.rule?.type === 'generic' ? 'generic' : 'ai' }));
 }
 
-/** Avisa no WhatsApp sobre sites sem preço (falha repetida ou ilegível), no máximo 1 aviso por site a cada 24 h. */
+/** Avisa no WhatsApp sobre sites sem preço (falha repetida ou ilegível): um aviso por episódio, com lembrete só depois de 7 dias. */
 async function warnProblemSources(deps: PipelineDeps, tracker: Tracker): Promise<void> {
   const { db, notifier, now } = deps;
   const nowMs = now().getTime();
   for (const s of db.listSources(tracker.id)) {
     const problem = s.status === 'unreadable' || (s.status === 'failing' && s.consecutiveFailures >= WARN_AFTER_FAILURES);
     if (!problem) continue;
-    if (s.lastNotifiedAt && nowMs - Date.parse(s.lastNotifiedAt) < WARN_COOLDOWN_HOURS * 3600_000) continue;
+    if (s.lastNotifiedAt) {
+      if (s.status === 'unreadable') continue; // ilegível avisa uma vez só
+      if (nowMs - Date.parse(s.lastNotifiedAt) < WARN_REMINDER_DAYS * 86_400_000) continue; // falha: lembrete só depois de dias
+    }
     const site = s.label || hostOf(s.url);
     const text = [
       `⚠️ ${tracker.name}: não consegui ler o preço em ${site}.`,
@@ -106,6 +116,15 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
   let mode: CheckMode = 'discovery';
   let needDiscovery = true;
   const hoursSince = (iso: string) => (now().getTime() - Date.parse(iso)) / 3600_000;
+  // Referência do alerta "abaixo do último valor": o MENOR valor que as fontes mostravam por último, e não só o do check
+  // anterior (que pode ter perdido uma loja por falha passageira e dar alerta falso quando ela volta).
+  const baseline = (() => {
+    if (tracker.kind !== 'price') return lastValue;
+    const vals = db.listSources(trackerId)
+      .filter((s) => s.status !== 'unreadable' && s.lastValue !== undefined && (!s.lastOkAt || hoursSince(s.lastOkAt) < BASELINE_STALE_HOURS))
+      .map((s) => s.lastValue as number);
+    return vals.length ? vals.reduce((a, b) => (b < a ? b : a)) : lastValue;
+  })();
   // busca completa que falhou há pouco: não tenta de novo ainda (só preços; os demais tipos seguem o intervalo do usuário)
   const attempt = tracker.kind === 'price' ? db.lastDiscoveryAttempt(trackerId) : undefined;
   // agendada: espera 1 h depois de uma busca que falhou; manual (ação do usuário): só uma espera curta contra cliques repetidos
@@ -123,9 +142,17 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
 
   // Preços: depois da descoberta, a rotina lê as fontes conhecidas (plano A = código, plano B = IA com trecho).
   if (tracker.kind === 'price') {
-    const readable = db.listSources(trackerId).filter((s) => s.status !== 'unreadable');
+    const known = db.listSources(trackerId);
+    const readable = known.filter((s) => s.status !== 'unreadable');
     const lastDiscovery = db.lastDiscoveryAt(trackerId);
     const discoveryDue = (!lastDiscovery || hoursSince(lastDiscovery) >= DISCOVERY_EVERY_HOURS) && !searchCoolingDown;
+    let anySuspect = false;
+    if (readable.length === 0 && known.length > 0 && !discoveryDue) {
+      // só há fontes que o código não lê: só a busca completa diária as vê, então isto não é falha nem gera custo
+      db.addCheck({ trackerId, at, ok: true, findings: [], model: 'leitura por código', costUsd: 0, mode: 'routine', sources: snapshot(known) });
+      await warnProblemSources(deps, tracker);
+      return { ok: true, alerted: false, baseline: false };
+    }
     if (readable.length > 0 && !discoveryDue) {
       mode = 'routine';
       for (const s of readable) {
@@ -136,7 +163,9 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
         );
         usages.push(...u);
         sourceResults.push(result);
-        db.recordSourceResult(s.id, { ok: result.ok, method: result.method, value: result.value, error: result.error, at });
+        // leitura fora do esperado é "suspeita": não conta como falha da loja (a busca completa decide se é queda real)
+        if (result.suspectValue !== undefined) anySuspect = true;
+        else db.recordSourceResult(s.id, { ok: result.ok, method: result.method, value: result.value, error: result.error, at });
         if (result.ok && result.value !== undefined) {
           findings.push({
             found: true, value: result.value, currency: 'BRL', title: s.label, sourceUrl: s.url,
@@ -146,6 +175,11 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
       }
       if (findings.length > 0) {
         needDiscovery = false;
+        // uma loja leu um valor muito diferente (possível queda grande, ex.: Black Friday): a busca completa confirma
+        if (anySuspect && !searchCoolingDown && (!lastDiscovery || hoursSince(lastDiscovery) >= SUSPECT_CONFIRM_MIN_HOURS)) {
+          needDiscovery = true;
+          mode = 'fallback';
+        }
       } else if (searchCoolingDown) {
         return recordFailure(`Nenhuma fonte deu preço (nem pelo código nem pela IA). ${COOLING_MESSAGE}`);
       } else if (!lastDiscovery || hoursSince(lastDiscovery) >= FALLBACK_MIN_HOURS) {
@@ -177,7 +211,8 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
     usages.push(...outcome.usages);
     findings = outcome.findings;
     if (tracker.kind === 'price') {
-      await learnSources({ db, fetchPage }, tracker, findings);
+      // aprender fontes é um extra: um erro aqui não pode perder o check nem o custo da busca (e causar nova busca em seguida)
+      try { await learnSources({ db, fetchPage }, tracker, findings); } catch { /* segue sem aprender desta vez */ }
       if (mode === 'discovery') sourceResults = snapshot(db.listSources(trackerId));
     }
   }
@@ -185,7 +220,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
   const costUsd = usages.reduce((sum, u) => sum + estimateCostUsd(u), 0);
   const last = db.lastAlert(trackerId);
   const decision = decideAlert(tracker, findings, {
-    lastValue,
+    lastValue: baseline,
     isNew: (key) => db.markSeen(trackerId, key),
     lastAlertAt: last?.at,
     lastAlertSourceUrl: last?.sourceUrl,

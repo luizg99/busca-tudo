@@ -95,10 +95,11 @@ export async function generateDigest(deps: DigestDeps, period: DigestPeriod): Pr
   const { db, llm, notifier, model, sendWhatsApp, now } = deps;
   const to = now();
   const from = new Date(to.getTime() - PERIOD_HOURS[period] * 3600_000);
+  const fromIso = from.toISOString();
   const all = db
     .listTrackers()
-    .filter((t) => t.digest === period)
-    .map((t) => ({ name: t.name, kind: t.kind, stats: computeStats(db, t.id, from.toISOString(), to.toISOString()) }));
+    .filter((t) => t.digest === period && t.status === 'active') // pausado não entra
+    .map((t) => ({ id: t.id, name: t.name, kind: t.kind, stats: computeStats(db, t.id, fromIso, to.toISOString()) }));
   // A IA só resume as quedas de preço; os sites sem preço entram como texto fixo (sem IA) para ficarem sempre claros.
   const sections = all
     .filter((s) => s.stats.alerts > 0)
@@ -106,7 +107,18 @@ export async function generateDigest(deps: DigestDeps, period: DigestPeriod): Pr
       const { sourceProblems: _problems, sourcesOk: _ok, ...forAi } = stats;
       return { name, kind, stats: forAi };
     });
-  const problems = all.filter((s) => s.stats.sourceProblems.length > 0).map((s) => ({ tracker: s.name, problems: s.stats.sourceProblems }));
+  // Só entram problemas NOVOS no período (descobertos agora ou que começaram a falhar agora): o que já era conhecido
+  // aparece no cartão do app, sem repetir a mesma coisa no resumo todo dia.
+  const problems = all
+    .map((s) => ({
+      tracker: s.name,
+      problems: s.stats.sourceProblems.filter((p) => {
+        const src = db.listSources(s.id).find((x) => x.url === p.url);
+        if (!src) return false;
+        return p.status === 'unreadable' ? src.createdAt >= fromIso : !!src.failingSince && src.failingSince >= fromIso;
+      }),
+    }))
+    .filter((x) => x.problems.length > 0);
 
   db.setSetting(`digest_last_${period}`, to.toISOString());
   if (sections.length === 0 && problems.length === 0) return { sent: false };

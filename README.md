@@ -48,6 +48,8 @@ A busca completa na web (cara, ~US$ 0,03) roda só na primeira vez, 1 vez por di
 
 1. **Plano A (custo zero):** o código baixa as páginas que a IA descobriu e lê o preço por uma regra aprendida ou por dados estruturados.
 2. **Plano B (centavos de centavo):** se o plano A falhar, o Haiku lê só um trecho da página.
-3. **Sem preço por A nem B:** o site aparece em **Sites sem preço** no cartão, no detalhe e nos relatórios, e o app avisa no WhatsApp (na 2ª falha seguida, no máximo 1 aviso por site a cada 24 h). Enquanto isso o preço dele só entra pela busca completa.
+3. **Sem preço por A nem B:** o site aparece em **Sites sem preço** no cartão, no detalhe e nos relatórios, e o app avisa no WhatsApp **uma vez por problema**: na 2ª falha seguida de um site, ou na hora para um site que só a busca completa consegue ver. Um lembrete só vem se a falha durar mais de 7 dias, e o aviso é rearmado quando o site volta a funcionar. Enquanto isso o preço dele só entra pela busca completa.
+4. **Queda grande de preço:** se uma loja lê um valor muito diferente do anterior (por exemplo, promoção), a busca completa confirma antes de contar como falha, e o alerta sai se for real.
+5. **Editar o produto** (nome, objetivo, "considerar", "ignorar" ou tipo) apaga as fontes aprendidas: elas valiam para o produto antigo.
 
 Design e plano: `docs/superpowers/plans/2026-11-26-leitura-por-codigo.md`.

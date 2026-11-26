@@ -182,7 +182,14 @@ export function createApi(deps: ApiDeps): Server {
         const errors = validateNewTracker(merged);
         if (errors.length) return send(res, 400, { error: errors.join(' '), errors });
         const { id: _i, createdAt: _c, ...patch } = merged;
-        return send(res, 200, db.updateTracker(id, patch));
+        // Se o acompanhamento passa a ser OUTRO produto (nome, objetivo, critérios ou tipo), as fontes aprendidas valem
+        // para o produto antigo: apaga, e a próxima verificação faz a busca completa. Pausar, frequência etc. não mexem.
+        const sameList = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+        const identityChanged = merged.name !== cur.name || merged.goal !== cur.goal || merged.kind !== cur.kind
+          || !sameList(merged.include, cur.include) || !sameList(merged.exclude, cur.exclude);
+        const updated = db.updateTracker(id, patch);
+        if (identityChanged) db.deleteSources(id);
+        return send(res, 200, updated);
       }
     }
 

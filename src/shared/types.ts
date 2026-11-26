@@ -35,7 +35,10 @@ export interface Finding {
 }
 
 /** Como ler o preço de uma página sem IA: regex com 1 grupo de captura sobre o texto visível, ou dados estruturados. */
-export type PriceRule = { type: 'regex'; pattern: string } | { type: 'generic' };
+export type PriceRule =
+  /** `genericOk`: no aprendizado os dados estruturados da página também reproduziram o preço (então podem servir de reserva). */
+  | { type: 'regex'; pattern: string; genericOk?: boolean }
+  | { type: 'generic' };
 export type ReadMethod = 'rule' | 'generic' | 'ai';
 export type CheckMode = 'routine' | 'discovery' | 'fallback';
 export type SourceStatus = 'ok' | 'failing' | 'unreadable';
@@ -49,6 +52,8 @@ export interface SourceResult {
   method?: ReadMethod;
   value?: number;
   error?: string;
+  /** Preço lido mas fora do esperado em relação ao anterior: não é falha da fonte, pede confirmação pela busca completa. */
+  suspectValue?: number;
 }
 
 export const MIN_INTERVAL_MINUTES = 15;
