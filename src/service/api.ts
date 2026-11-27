@@ -162,6 +162,7 @@ export function createApi(deps: ApiDeps): Server {
           const invalid = entries.filter((x) => normalizeTrustedList([x]).length === 0);
           if (invalid.length) throw new HttpError(400, `Endereço inválido na lista de sites confiáveis: ${invalid.slice(0, 3).map(String).join(', ')}. Use o domínio, por exemplo amazon.com.br.`);
           db.setSetting('trusted_sites', JSON.stringify(clean));
+          for (const t of db.listTrackers()) if (t.kind === 'price') db.requestSearch(t.id); // lojas válidas mudaram
         }
         if (b.sendReportsToWhatsApp !== undefined) db.setSetting('send_reports_whatsapp', b.sendReportsToWhatsApp ? '1' : '0');
         return send(res, 200, { ...readSettings(db), hasApiKey: deps.hasApiKey() });
@@ -199,6 +200,8 @@ export function createApi(deps: ApiDeps): Server {
           || !sameList(merged.include, cur.include) || !sameList(merged.exclude, cur.exclude);
         const updated = db.updateTracker(id, patch);
         if (identityChanged) db.deleteSources(id);
+        // outro produto ou outra regra de lojas: a próxima verificação faz a busca completa, sem esperar
+        if (identityChanged || merged.onlyTrusted !== cur.onlyTrusted) db.requestSearch(id);
         return send(res, 200, updated);
       }
     }

@@ -130,6 +130,8 @@ export function openDb(path: string) {
   ensureColumn('sources', 'failing_since', 'TEXT');
   ensureColumn('sources', 'trusted_via', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('sources', 'origin_json', 'TEXT');
+  // fonte que saiu da busca do dia fica "aposentada" (não é lida), mas guarda o estado dos avisos se voltar
+  ensureColumn('sources', 'dropped_at', 'TEXT');
   // acompanhamentos que já existiam seguem sem restrição (só os novos nascem com "só lojas confiáveis")
   ensureColumn('trackers', 'only_trusted', 'INTEGER NOT NULL DEFAULT 0');
 
@@ -315,7 +317,7 @@ export function openDb(path: string) {
       const existing = raw.prepare('SELECT * FROM sources WHERE tracker_id = ? AND url = ?').get(trackerId, s.url) as any;
       if (existing) {
         raw
-          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ?, failing_since = ?, last_notified_at = ?, trusted_via = ?, origin_json = ? WHERE id = ?')
+          .prepare('UPDATE sources SET label = ?, rule_json = ?, status = ?, last_value = ?, last_error = ?, consecutive_failures = ?, failing_since = ?, last_notified_at = ?, trusted_via = ?, origin_json = ?, dropped_at = NULL WHERE id = ?')
           .run(s.label ?? existing.label, s.rule ? JSON.stringify(s.rule) : existing.rule_json, s.status,
             s.lastValue ?? existing.last_value, s.status === 'ok' ? null : s.lastError ?? existing.last_error,
             s.status === 'ok' ? 0 : existing.consecutive_failures, s.status === 'ok' ? null : existing.failing_since,
@@ -334,7 +336,7 @@ export function openDb(path: string) {
       return r ? toSource(r) : undefined;
     },
     listSources(trackerId: number): SourceRow[] {
-      return raw.prepare('SELECT * FROM sources WHERE tracker_id = ? ORDER BY id').all(trackerId).map(toSource);
+      return raw.prepare('SELECT * FROM sources WHERE tracker_id = ? AND dropped_at IS NULL ORDER BY id').all(trackerId).map(toSource);
     },
     /** Registra o resultado da leitura numa verificação: falhas se acumulam, sucesso zera. */
     recordSourceResult(id: number, r: { ok: boolean; method?: ReadMethod; value?: number; error?: string; at: string }): void {
@@ -348,14 +350,30 @@ export function openDb(path: string) {
           .run(r.at, r.error ?? null, r.at, id);
       }
     },
-    /** Apaga as fontes aprendidas (ex.: quando o acompanhamento muda de produto). */
-    /** A busca do dia manda: fica só o que ela trouxe (as que continuam mantêm a regra aprendida). */
-    keepOnlySources(trackerId: number, urls: string[]): void {
+    /**
+     * A busca do dia manda: só o que ela trouxe continua sendo lido (as que continuam mantêm a regra aprendida). As
+     * demais são aposentadas, não apagadas: se voltarem num dia seguinte, o estado dos avisos (já avisado etc.) continua.
+     */
+    keepOnlySources(trackerId: number, urls: string[], at: string): void {
       const keep = new Set(urls);
-      for (const s of api.listSources(trackerId)) if (!keep.has(s.url)) raw.prepare('DELETE FROM sources WHERE id = ?').run(s.id);
+      for (const s of api.listSources(trackerId)) if (!keep.has(s.url)) api.dropSource(s.id, at);
     },
+    dropSource(id: number, at: string): void {
+      raw.prepare('UPDATE sources SET dropped_at = ? WHERE id = ?').run(at, id);
+    },
+    /** Apaga as fontes aprendidas (ex.: quando o acompanhamento muda de produto). */
     deleteSources(trackerId: number): void {
       raw.prepare('DELETE FROM sources WHERE tracker_id = ?').run(trackerId);
+    },
+    /** Pede uma busca completa na próxima verificação (produto mudou, lista de lojas mudou...), mesmo dentro da espera. */
+    requestSearch(trackerId: number): void {
+      api.setSetting(`search_requested_${trackerId}`, '1');
+    },
+    searchRequested(trackerId: number): boolean {
+      return api.getSetting(`search_requested_${trackerId}`) === '1';
+    },
+    clearSearchRequest(trackerId: number): void {
+      api.setSetting(`search_requested_${trackerId}`, '');
     },
     markSourceNotified(id: number, at: string): void {
       raw.prepare('UPDATE sources SET last_notified_at = ? WHERE id = ?').run(at, id);

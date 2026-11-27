@@ -29,6 +29,12 @@ export function isReliablePrice(f: Finding): boolean {
   return f.found && !f.ignoredReason && typeof f.value === 'number' && f.value > 0 && f.confidence >= MIN_CONFIDENCE && isBrl(f);
 }
 
+/** "https://www.kabum.com.br/produto/1" → "kabum.com.br". */
+function hostOf(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return undefined; }
+}
+
 /** Descrição curta do pagamento: "à vista (Pix)", "só parcelado (10x sem juros)" ou undefined se não se sabe. */
 export function paymentLabel(f: Pick<Finding, 'payment' | 'paymentNote'>): string | undefined {
   if (!f.payment) return undefined;
@@ -145,16 +151,21 @@ export function decideAlert(t: Tracker, findings: Finding[], ctx: DecisionContex
     const pct = ((diff / ctx.lastValue) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     lines.push(`Última consulta: ${brl(ctx.lastValue, best.currency)} (queda de ${brl(diff, best.currency)} · ${pct}%)`);
   }
-  // loja que vende e onde a oferta foi achada (ex.: "Amazon · achado em ofertinha.com.br") e o cupom, se houver
-  if (best.store || best.via) lines.push(`Loja: ${best.store ?? best.via}${best.via ? ` · achado em ${best.via}` : ''}`);
-  if (best.viaUrl) lines.push(`Achado em: ${best.viaUrl}`);
+  // cada fonte numa linha, nome e link juntos: a loja (de onde vem o preço) e, se for o caso, o site onde a oferta foi achada
+  // oferta ainda no endereço do site de cupom (sem leitura na loja): a loja é o link de compra e o site é onde foi achada
+  const onBlog = !best.viaUrl && !!best.via && !!best.storeUrl && best.storeUrl !== best.sourceUrl;
+  const storeLink = onBlog ? best.storeUrl : best.sourceUrl;
+  const foundAt = best.viaUrl ?? (onBlog ? best.sourceUrl : undefined);
+  const storeName = best.store ?? hostOf(storeLink);
+  if (storeLink) lines.push(`Loja: ${storeName ? `${storeName} — ` : ''}${storeLink}`);
+  else if (best.store) lines.push(`Loja: ${best.store}`);
+  if (foundAt) lines.push(`Achado em: ${best.via ?? hostOf(foundAt) ?? ''} — ${foundAt}`);
+  else if (best.via) lines.push(`Achado em: ${best.via}`);
   if (best.claimedValue !== undefined) lines.push(`O site da oferta informava ${brl(best.claimedValue, best.currency)}; vale o preço lido na loja.`);
   if (best.unverified) lines.push('⚠️ Preço não conferido na página da loja (informado pela busca).');
   const pay = paymentLabel(best);
   if (pay) lines.push(`Pagamento: ${pay}`);
   if (best.coupon) lines.push(`Cupom: ${best.coupon}`);
-  if (best.storeUrl && best.storeUrl !== best.sourceUrl) lines.push(`Comprar: ${best.storeUrl}`);
-  if (best.sourceUrl) lines.push(best.sourceUrl);
   const text = lines.join('\n');
   return { baseline: false, ignored, alert: { text, sourceUrl: best.sourceUrl, value } };
 }

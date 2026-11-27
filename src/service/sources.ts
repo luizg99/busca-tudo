@@ -182,7 +182,7 @@ function parseAiValue(text: string): number | null | undefined {
   return undefined;
 }
 
-function keywordsOf(t: Tracker): string[] {
+export function keywordsOf(t: Tracker): string[] {
   return [...t.include, ...t.name.split(/\s+/)].map((k) => k.trim()).filter((k) => k.length > 2);
 }
 
@@ -316,7 +316,8 @@ export async function learnSources(deps: LearnDeps, tracker: Tracker, findings: 
     }
     if (valueInText(htmlToText(page.html), value)) {
       // ensina a leitura uma vez (código primeiro; IA só se precisar), para a rotina de 15 em 15 min não usar IA
-      let taught = induceRule(page.html, value);
+      // a regra que o site já tinha e que ainda lê o preço continua: não gasta IA reensinando
+      let taught = known?.rule && close(applyRule(known.rule, page.html)) ? known.rule : induceRule(page.html, value);
       if (!taught && deps.llm && deps.model) {
         const t = await teachRule(deps.llm, deps.model, page.html, value);
         usages.push(...t.usages);

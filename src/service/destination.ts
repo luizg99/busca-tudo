@@ -3,8 +3,12 @@ import type { Usage } from './cost';
 import type { FetchResult } from './fetcher';
 import { extractGenericPrice } from './html';
 import type { LlmClient } from './llm';
-import { applyRule, MAX_VARIATION, readSource } from './sources';
-import { pageShowsValue } from './teach';
+import { mapLimit } from './limit';
+import { applyRule, keywordsOf, MAX_VARIATION, readSource } from './sources';
+import { pageShowsValueNear } from './teach';
+
+/** Conferências ao mesmo tempo: cada uma pode chamar a IA, e muitas juntas esbarram no limite de requisições. */
+const PARALLEL_CHECKS = 4;
 import { isTrustedUrl, normalizeDomain, type ResolveFinalUrl } from './trust';
 
 /** Ofertas cujo preço é conferido na página da loja por verificação (as demais ficam "não conferidas"). */
@@ -62,8 +66,9 @@ export async function verifyAtDestination(findings: Finding[], d: DestinationDep
     // na própria página onde a busca viu o preço, a regra que a IA montou lê de graça (sem gastar IA de novo)
     let value = dest === f.sourceUrl && f.priceRegex ? applyRule({ type: 'regex', pattern: f.priceRegex }, page.html) : undefined;
     if (value === undefined) value = extractGenericPrice(page.html);
-    // o preço informado está escrito na página da loja: o código confirma, sem gastar IA
-    if (value === undefined && pageShowsValue(page.html, f.value)) value = f.value;
+    // oferta direta: se o preço informado está escrito junto do nome do produto, o código confirma, sem gastar IA.
+    // Oferta de site de cupom não: o número dele pode aparecer em outro item da loja; ali quem lê é a leitura do produto.
+    if (value === undefined && !fromAggregator && pageShowsValueNear(page.html, f.value, keywordsOf(d.tracker))) value = f.value;
     if (value === undefined) {
       const { result, usages: u } = await readSource(
         { fetchPage: async () => page, tracker: d.tracker, llm: d.llm, model: d.model },
@@ -104,7 +109,7 @@ export async function verifyAtDestination(findings: Finding[], d: DestinationDep
     }
   };
 
-  const checked = await Promise.all(findings.map(one));
+  const checked = await mapLimit(findings, PARALLEL_CHECKS, one);
 
   // ofertas que acabaram na mesma página da loja viram uma só; o cupom informado por um site de ofertas é mantido
   // mesma página = mesmo site e caminho (parâmetros de afiliado/rastreio não contam)
@@ -117,7 +122,7 @@ export async function verifyAtDestination(findings: Finding[], d: DestinationDep
     if (i === undefined) { seen.set(pageKey(f.sourceUrl), out.length); out.push(f); continue; }
     const p = out[i];
     if (!p.coupon && f.coupon) {
-      out[i] = { ...p, coupon: f.coupon, store: p.store ?? f.store, storeUrl: p.storeUrl ?? f.storeUrl, via: p.via ?? f.via, claimedValue: p.claimedValue ?? f.claimedValue, payment: p.payment ?? f.payment, paymentNote: p.paymentNote ?? f.paymentNote };
+      out[i] = { ...p, coupon: f.coupon, store: p.store ?? f.store, storeUrl: p.storeUrl ?? f.storeUrl, via: p.via ?? f.via, viaUrl: p.viaUrl ?? f.viaUrl, claimedValue: p.claimedValue ?? f.claimedValue, payment: p.payment ?? f.payment, paymentNote: p.paymentNote ?? f.paymentNote };
     }
   }
   return { findings: out, usages };

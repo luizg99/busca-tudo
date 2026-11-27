@@ -183,6 +183,6 @@ describe('blog de cupom: o link do blog fica guardado', () => {
     s.pages[AMZ] = page('Amazon', '3.400,00');
     const r = await runCheck(s.deps, s.t.id);
     expect(r.alerted).toBe(true);
-    expect(s.sent.at(-1)).toContain(`Achado em: ${BLOG}`);
+    expect(s.sent.at(-1)!.split('\n')).toContain(`Achado em: blog.com.br — ${BLOG}`);
   });
 });

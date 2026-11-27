@@ -62,7 +62,7 @@ describe('alerta mostra o link da loja', () => {
   it('inclui o endereço da loja além do site onde foi achado', () => {
     const tracker = { id: 1, name: 'PS5', kind: 'price', goal: 'g', include: [], exclude: [], intervalMinutes: 60, alertCondition: { type: 'below_last' }, digest: 'none', status: 'active', createdAt: '', onlyTrusted: true } as never;
     const d = decideAlert(tracker, [f({ value: 3400, store: 'Amazon', storeUrl: 'https://www.amazon.com.br/dp/PS5', via: 'ofertinha.com.br' })], { isNew: () => true, lastValue: 3600, now: '2026-01-02T12:00:00Z' });
-    expect(d.alert!.text).toContain('Comprar: https://www.amazon.com.br/dp/PS5');
+    expect(d.alert!.text.split('\n')).toContain('Loja: Amazon — https://www.amazon.com.br/dp/PS5'); // nome e link da loja na mesma linha
   });
 });
 
@@ -99,7 +99,7 @@ describe('pipeline: limite de conferências, paralelo e cupom na rotina', () => 
     const item = { found: true, value: 3600, currency: 'BRL', title: 'Amazon', source_url: AMZ, evidence: 'e', confidence: 0.9, price_regex: REGEX };
     const s = setup([item], { [AMZ]: html('3600,00') });
     s.db.upsertSource(s.t.id, { url: 'https://seletronic.com.br/ps5', label: 'Seletronic', status: 'ok', lastValue: 3905, rule: { type: 'regex', pattern: REGEX } });
-    s.db.addCheck({ trackerId: s.t.id, at: '2026-01-10T09:00:00.000Z', ok: true, findings: [{ found: true, value: 3905, currency: 'BRL', title: 'Seletronic', sourceUrl: 'https://seletronic.com.br/ps5', evidence: 'e', confidence: 0.9 }], model: 'm', costUsd: 0, mode: 'discovery', sources: [] });
+    s.db.addCheck({ trackerId: s.t.id, at: '2026-01-10T09:00:00.000Z', ok: true, findings: [], model: 'm', costUsd: 0, mode: 'discovery', sources: [] }); // cenário original: a última busca não achou nada
     s.advance(10); // descoberta feita há pouco: antes do conserto a rotina registrava leitura vazia sem buscar
     const r = await runCheck(s.deps, s.t.id);
     expect(r.ok).toBe(true);
@@ -159,7 +159,8 @@ describe('pipeline: limite de conferências, paralelo e cupom na rotina', () => 
     expect(s.db.listChecks(s.t.id)[0].mode).toBe('routine');
     expect(s.sent.at(-1)).toContain('Cupom: PROMOAGORA (Pix)');
     expect(s.sent.at(-1)).toContain('Loja: Amazon');
-    expect(s.sent.at(-1)).toContain(`Comprar: ${GO}`);
+    expect(s.sent.at(-1)).toContain(`Loja: Amazon — ${AMZ}`); // o preço vem da página da loja
+    expect(s.sent.at(-1)).toContain(`Achado em: ofertinha.com.br — ${OFERTA}`);
   });
 });
 

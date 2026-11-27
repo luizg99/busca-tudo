@@ -13,19 +13,44 @@ import { applyRule, isRiskyPattern } from './sources';
 const LEARN_TOLERANCE = 0.005;
 const close = (v: number | undefined, value: number) => v !== undefined && Math.abs(v - value) / value <= LEARN_TOLERANCE;
 
-/** Onde o preço aparece no texto (com ou sem separador de milhar; com centavos ou inteiro). */
-function findValue(text: string, value: number): { index: number; length: number } | undefined {
+/** Formas de escrever o preço no texto (com ou sem separador de milhar; com centavos ou inteiro). */
+function valuePatterns(value: number): RegExp[] {
   const fixed = value.toFixed(2);
   const [int, dec] = fixed.split('.');
   const thousands = int.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const forms = [`${thousands},${dec}`, `${int},${dec}`];
   if (Number.isInteger(value)) forms.push(thousands, int);
-  for (const n of forms) {
-    const m = new RegExp(`(?<![\\d.,])${esc(n)}(?![\\d]|,[1-9])`).exec(text);
+  return forms.map((n) => new RegExp(`(?<![\\d.,])${esc(n)}(?![\\d]|,[1-9])`, 'g'));
+}
+
+/** Onde o preço aparece pela primeira vez no texto. */
+function findValue(text: string, value: number): { index: number; length: number } | undefined {
+  for (const re of valuePatterns(value)) {
+    re.lastIndex = 0;
+    const m = re.exec(text);
     if (m) return { index: m.index, length: m[0].length };
   }
   return undefined;
+}
+
+/**
+ * O preço aparece JUNTO do nome do produto (a até `radius` caracteres de uma palavra-chave). Um número solto em outro
+ * lugar da página (item de "compre junto", preço "de", total parcelado) não conta.
+ */
+export function pageShowsValueNear(html: string, value: number, keywords: string[], radius = 150): boolean {
+  const text = htmlToText(html);
+  const lower = text.toLowerCase();
+  const kws = keywords.map((k) => k.toLowerCase()).filter((k) => k.length > 2);
+  if (kws.length === 0) return false;
+  for (const re of valuePatterns(value)) {
+    for (const m of text.matchAll(re)) {
+      const i = m.index ?? 0;
+      const around = lower.slice(Math.max(0, i - radius), i + m[0].length + radius);
+      if (kws.some((k) => around.includes(k))) return true;
+    }
+  }
+  return false;
 }
 
 const NUMBER = /[\d][\d.,]*/g;
@@ -47,11 +72,6 @@ function literal(s: string): string {
     .split(/\s+/)
     .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('\\s{0,3}');
-}
-
-/** O preço aparece no texto da página (confirma, sem IA, o que a busca informou). */
-export function pageShowsValue(html: string, value: number): boolean {
-  return findValue(htmlToText(html), value) !== undefined;
 }
 
 /** Regra montada só pelo código, conferida na própria página; undefined se não houver uma confiável. */

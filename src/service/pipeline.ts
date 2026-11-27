@@ -182,8 +182,10 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
     const lastDiscovery = db.lastDiscoveryAt(trackerId);
     const discoveryDue = (!lastDiscovery || hoursSince(lastDiscovery) >= DISCOVERY_EVERY_HOURS) && !searchCoolingDown;
     let anySuspect = false;
-    // a última busca completa não achou nenhuma loja: não repete a cada verificação, só depois de FALLBACK_MIN_HOURS
-    if (known.length === 0 && !opts.manual && lastDiscovery && hoursSince(lastDiscovery) < FALLBACK_MIN_HOURS) {
+    // a última busca completa não achou nenhuma loja: não repete a cada verificação, só depois de FALLBACK_MIN_HOURS.
+    // Não vale se as fontes sumiram por outro motivo (produto mudou, lista de lojas mudou): aí há um pedido de busca.
+    if (known.length === 0 && db.listSources(trackerId).length === 0 && !db.searchRequested(trackerId) && !opts.manual
+      && lastDiscovery && hoursSince(lastDiscovery) < FALLBACK_MIN_HOURS) {
       const lastSearch = db.listChecks(trackerId, 200).find((c) => c.ok && (c.mode === 'discovery' || c.mode === 'fallback'));
       if (lastSearch && !lastSearch.findings.some(isReliablePrice)) {
         db.addCheck({ trackerId, at, ok: true, findings: [], model: 'leitura por código', costUsd: 0, mode: 'routine', sources: [] });
@@ -253,6 +255,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
       return { ok: false, alerted: false, baseline: false, error };
     }
     usages.push(...outcome.usages);
+    db.clearSearchRequest(trackerId); // pedido de busca atendido
     if (filterByTrust) {
       const cache = new Map<string, Promise<string[] | undefined>>();
       const pageLinks: PageLinks = (url) => {
@@ -277,8 +280,12 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
       try {
         const learned = await learnSources({ db, fetchPage, llm, model: models.routine }, tracker, findings);
         usages.push(...learned.usages);
-        // a lista de sites segue a busca do dia; se ela não trouxe nenhum, os que já funcionavam continuam
-        if (learned.urls.length > 0) db.keepOnlySources(trackerId, learned.urls);
+        // a lista de sites segue a busca do dia, mas só se ela trouxe ao menos um site que o código lê: uma busca que só
+        // achou sites ilegíveis (ou nenhum) não pode apagar as lojas que liam bem
+        const fresh = new Set(learned.urls);
+        if (db.listSources(trackerId).some((x) => fresh.has(x.url) && x.status === 'ok')) db.keepOnlySources(trackerId, learned.urls, at);
+        // com "só lojas confiáveis", fonte fora da lista nunca seria lida: sai
+        if (filterByTrust) for (const x of db.listSources(trackerId)) if (!trustedOk(x)) db.dropSource(x.id, at);
       } catch { /* segue sem aprender desta vez */ }
       if (mode === 'discovery') sourceResults = snapshot(db.listSources(trackerId));
     }
