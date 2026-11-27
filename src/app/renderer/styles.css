@@ -111,6 +111,8 @@ a.link:hover { text-decoration: underline; }
 .metric small { color: var(--muted); font-size: 12px; }
 button.metric { display: flex; flex-direction: column; justify-content: flex-start; align-items: stretch; font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; }
 button.metric:hover { border-color: var(--accent); background: var(--accent-soft); }
+.search-info { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--muted); }
+.search-info .btn { margin-left: 2px; }
 .card.focus { outline: 2px solid var(--accent); outline-offset: 0; }
 .focus-note { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--accent); }
 .tracker-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

@@ -4,7 +4,7 @@ import { validateNewTracker, type NewTracker } from '../shared/types';
 import { overLimit, spentSince } from './cost';
 import type { Db } from './db';
 import type { CheckResultSummary } from './pipeline';
-import { computeStats } from './reports';
+import { computeStats, searchSummary } from './reports';
 import type { SetupSession } from './setupChat';
 import type { WhatsAppStatus } from './notifier';
 import { normalizePhone } from './phone';
@@ -213,6 +213,11 @@ export function createApi(deps: ApiDeps): Server {
 
     if (method === 'GET' && (m = path.match(/^\/trackers\/(\d+)\/checks$/))) {
       return send(res, 200, db.listChecks(Number(m[1]), Number(url.searchParams.get('limit') ?? 100)));
+    }
+
+    if (method === 'GET' && (m = path.match(/^\/trackers\/(\d+)\/last-search$/))) {
+      const last = db.lastSearchCheck(Number(m[1]));
+      return send(res, 200, last ? searchSummary(last) : {});
     }
 
     if (method === 'GET' && (m = path.match(/^\/trackers\/(\d+)\/checks\/(\d+)$/))) {

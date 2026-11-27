@@ -1,3 +1,4 @@
+import type { Finding } from '../shared/types';
 import type { Usage } from './cost';
 import type { Db } from './db';
 import { bestReliable } from './decide';
@@ -31,6 +32,30 @@ export interface TrackerStats {
   sourceProblems: SourceProblem[];
   sourcesOk: number;
   relevant: Array<{ at: string; title?: string; value?: number; sourceUrl?: string }>;
+}
+
+export interface SearchSummary {
+  at: string;
+  checkId: number;
+  /** Sites distintos que a busca achou (a mesma página com parâmetros diferentes conta uma vez). */
+  sites: number;
+  /** Dos achados, quantos foram ignorados (loja desconhecida etc.). */
+  ignored: number;
+  mode?: string;
+}
+
+/** Resumo de uma busca completa: quando rodou e quantos sites achou. */
+export function searchSummary(check: { id: number; at: string; mode?: string; findings: Finding[] }): SearchSummary {
+  const key = (u: string) => { try { const x = new URL(u); return `${x.hostname.replace(/^www./, '')}${x.pathname}`; } catch { return u; } };
+  const sites = new Set<string>();
+  const ignored = new Set<string>();
+  check.findings.forEach((f, i) => {
+    if (!f.found) return;
+    const k = f.sourceUrl ? key(f.sourceUrl) : `sem-endereco-${i}`;
+    sites.add(k);
+    if (f.ignoredReason) ignored.add(k);
+  });
+  return { at: check.at, checkId: check.id, sites: sites.size, ignored: ignored.size, ...(check.mode ? { mode: check.mode } : {}) };
 }
 
 export type DigestPeriod = 'daily' | 'weekly';

@@ -242,6 +242,13 @@ export function openDb(path: string) {
         .all(trackerId, limit)
         .map(toCheck);
     },
+    /** A última busca completa (com IA) que deu certo. */
+    lastSearchCheck(trackerId: number): CheckRow | undefined {
+      const r = raw
+        .prepare("SELECT * FROM checks WHERE tracker_id = ? AND ok = 1 AND mode IN ('discovery', 'fallback') ORDER BY at DESC, id DESC LIMIT 1")
+        .get(trackerId);
+      return r ? toCheck(r) : undefined;
+    },
     getCheck(trackerId: number, id: number): CheckRow | undefined {
       const r = raw.prepare('SELECT * FROM checks WHERE id = ? AND tracker_id = ?').get(id, trackerId);
       return r ? toCheck(r) : undefined;

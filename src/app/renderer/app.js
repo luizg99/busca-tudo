@@ -195,7 +195,15 @@ function trackerEditor(t, stats) {
     h('div', { class: 'tracker-foot' }, save, btn('Cancelar', { kind: 'ghost', sm: true, onclick: close })));
 }
 
-function trackerCard(t, last, stats) {
+/** "Busca diária com IA rodada em ..., N sites achados" + botão para ver os sites. */
+function searchInfo(t, search) {
+  if (!search?.checkId) return h('div', { class: 'search-info muted small' }, icon('search'), h('span', {}, 'Busca diária com IA: ainda não rodou.'));
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const text = `Busca diária com IA rodada em ${when(search.at)}, ${plural(search.sites, 'site achado', 'sites achados')}${search.ignored ? ` (${plural(search.ignored, 'ignorado', 'ignorados')})` : ''}`;
+  return h('div', { class: 'search-info small' }, icon('search'), h('span', {}, text), btn('Ver sites', { kind: 'ghost', sm: true, onclick: () => viewDetail(t, search.checkId) }));
+}
+
+function trackerCard(t, last, stats, search) {
   const best = last?.findings?.filter((f) => f.found && !f.ignoredReason && f.value != null && f.confidence >= 0.6 && (!f.currency || f.currency === 'BRL')).sort((a, b) => a.value - b.value)[0];
   const nxt = nextCheck(t, last, lastStatus?.overLimit);
   const isNews = t.kind === 'news';
@@ -232,6 +240,8 @@ function trackerCard(t, last, stats) {
            metric('Menor em 7 dias', stats?.min != null ? money(stats.min) : '—', stats ? dot(payLabel(stats.minPayment, stats.minPaymentNote), stats.minAt ? when(stats.minAt) : `${stats.checks} verificações`) : '', stats?.minCheckId ? () => viewDetail(t, stats.minCheckId) : undefined)],
       metric('Próxima consulta', nxt.text, nxt.sub),
       metric('Frequência', `${t.intervalMinutes} min`, `alerta: ${COND(t.alertCondition)}`)),
+    // última busca completa com IA: quando rodou e quantos sites achou; o botão abre essa consulta, com os sites
+    t.kind === 'price' ? searchInfo(t, search) : null,
     last && !last.ok ? h('div', { class: 'alert' }, icon('alert'), h('span', {}, `Última verificação falhou: ${last.error}`)) : null,
     stats?.sourceProblems?.length
       ? h('div', { class: 'alert warn' }, icon('alert'), h('div', {}, h('strong', {}, `Sem preço em ${stats.sourceProblems.length} site(s) (nem pelo código nem pela IA):`),
@@ -257,8 +267,12 @@ async function viewTrackers() {
       btn('Criar o primeiro', { kind: 'primary', onclick: () => setView('chat') }, 'plus')));
   }
   const cards = await Promise.all(list.map(async (t) => {
-    const [checks, stats] = await Promise.all([api('GET', `/trackers/${t.id}/checks?limit=1`).catch(() => []), api('GET', `/trackers/${t.id}/stats`).catch(() => undefined)]);
-    return editingId === t.id ? trackerEditor(t, stats) : trackerCard(t, checks[0], stats);
+    const [checks, stats, search] = await Promise.all([
+      api('GET', `/trackers/${t.id}/checks?limit=1`).catch(() => []),
+      api('GET', `/trackers/${t.id}/stats`).catch(() => undefined),
+      t.kind === 'price' ? api('GET', `/trackers/${t.id}/last-search`).catch(() => undefined) : Promise.resolve(undefined),
+    ]);
+    return editingId === t.id ? trackerEditor(t, stats) : trackerCard(t, checks[0], stats, search);
   }));
   return h('div', { class: 'page' }, head, h('div', { class: 'stack' }, cards));
 }
