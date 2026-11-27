@@ -296,15 +296,22 @@ function offerRows(c) {
   });
   const out = [...rows.values()].map(({ f, r, url }) => {
     const value = f?.value ?? (r?.ok ? r.value : undefined);
-    const store = f?.store || hostOf(url || '');
+    // buscas antigas ainda guardam o endereço do site de cupom como página da oferta: o link principal é o da LOJA
+    // (o nome mostrado), e o site de cupom vira um link próprio, "achado em"
+    const onBlog = !!f && !!f.via && !f.viaUrl && !!f.storeUrl && f.storeUrl !== url;
+    const href = onBlog ? f.storeUrl : url;
+    const blogHref = f?.viaUrl || (onBlog ? url : '');
+    const store = f?.store || hostOf(href || '');
     const title = f?.title || r?.label || '';
     const method = r?.ok ? METHOD[r.method] || r.method : '';
-    const notes = [
+    const parts = [
       method ? `lido por ${method}` : '',
-      f?.viaUrl ? `achado em ${f.via || hostOf(f.viaUrl)}` : f?.via ? `achado em ${f.via}` : '',
       f?.coupon ? `cupom ${f.coupon}` : '',
       f?.claimedValue != null ? `o site da oferta informava ${money(f.claimedValue, f.currency)}` : '',
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean);
+    const notes = parts.length || blogHref || f?.via
+      ? h('div', { class: 'muted small' }, parts.join(' · '), blogHref ? [parts.length ? ' · ' : '', 'achado em ', link(blogHref, f?.via || hostOf(blogHref))] : f?.via ? `${parts.length ? ' · ' : ''}achado em ${f.via}` : null)
+      : null;
     const warn = f?.ignoredReason ? `Ignorada: ${f.ignoredReason}` : f?.unverified ? 'Preço não conferido na página da loja (informado pela busca).' : (!f && r && !r.ok ? r.error : '');
     const pay = f?.payment ? badge(payLabel(f.payment, f.paymentNote), f.payment === 'vista' ? 'ok' : 'warn') : null;
     if (pay && f.paymentNote) pay.title = f.paymentNote;
@@ -312,8 +319,8 @@ function offerRows(c) {
     return h('div', { class: 'finding' },
       h('span', { class: f?.ignoredReason || (!f && r && !r.ok) ? 'val muted' : 'val' }, value != null ? money(value, f?.currency) : 'sem preço'),
       h('div', { class: 'info' },
-        h('div', { class: 't', title: title || url || '' }, h('strong', {}, store), url ? link(url, label || ` — ${url}`) : label),
-        notes ? h('div', { class: 'muted small' }, notes) : null,
+        h('div', { class: 't', title: title || href || '' }, h('strong', {}, store), href ? link(href, label || ` — ${href}`) : label),
+        notes,
         warn ? h('div', { class: f?.ignoredReason || f?.unverified ? 'warn small' : 'bad small' }, warn) : null),
       h('div', { class: 'tags' },
         pay,
