@@ -475,6 +475,7 @@ async function viewSettings() {
   const alertNumber = h('input', { type: 'text', value: s.alertNumber ?? '', placeholder: 'vazio = o próprio número conectado', inputmode: 'tel', 'aria-label': 'Número que recebe os avisos' });
   const trusted = h('textarea', { rows: 8, placeholder: 'amazon.com.br (um por linha)', 'aria-label': 'Sites confiáveis' });
   trusted.value = (s.trustedSites || []).join('\n');
+  const target = h('input', { type: 'number', min: '3', max: '30', step: '1', value: s.targetSites ?? 15, 'aria-label': 'Sites por busca' });
   const wa = h('input', { type: 'checkbox', checked: s.sendReportsToWhatsApp });
   const boot = h('input', { type: 'checkbox', checked: startup });
 
@@ -491,7 +492,7 @@ async function viewSettings() {
 
   const save = btn('Salvar alterações', { kind: 'primary', onclick: async () => {
     try {
-      const body = { models: { setup: mSetup.value, routine: mRoutine.value, escalate: mEsc.value }, limitDayUsd: day.value === '' ? null : Number(day.value), limitMonthUsd: month.value === '' ? null : Number(month.value), sendReportsToWhatsApp: wa.checked, trustedSites: trusted.value.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean), alertNumber: alertNumber.value.trim() === '' ? null : alertNumber.value.trim() };
+      const body = { models: { setup: mSetup.value, routine: mRoutine.value, escalate: mEsc.value }, limitDayUsd: day.value === '' ? null : Number(day.value), limitMonthUsd: month.value === '' ? null : Number(month.value), sendReportsToWhatsApp: wa.checked, targetSites: Number(target.value), trustedSites: trusted.value.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean), alertNumber: alertNumber.value.trim() === '' ? null : alertNumber.value.trim() };
       if (key.value.trim()) body.anthropicApiKey = key.value.trim();
       await api('PUT', '/settings', body);
       key.value = '';
@@ -508,6 +509,8 @@ async function viewSettings() {
         h('div', { class: 'grid3', style: 'margin-top:14px' }, field('Conversa de cadastro', mSetup, 'modelo'), field('Verificações', mRoutine, 'modelo barato'), field('Reforço', mEsc, 'baixa confiança'))),
       section('Sites confiáveis', 'Os acompanhamentos de preço só valem ofertas dessas lojas. Sites desconhecidos (blogs, cupons) também entram, desde que o link deles leve a uma loja da lista.', badge(`${(s.trustedSites || []).length} lojas`, 'accent'),
         field('Um domínio por linha', trusted, 'Subdomínios contam (www.amazon.com.br = amazon.com.br). Lista vazia = sem restrição.')),
+      section('Busca com IA', 'A busca diária tenta reunir esse número de sites diferentes (lojas, sites de ofertas e blogs) e o app acompanha todos o dia todo.', null,
+        h('div', { class: 'grid2' }, field('Sites por busca', target, 'De 3 a 30. Mais sites = mais pesquisas na web por busca (cerca de US$ 0,01 cada) e mais chance de achar o menor preço.'))),
       section('Limites de custo', 'As verificações pausam sozinhas quando o limite é atingido.', null,
         h('div', { class: 'grid2' }, field('Limite diário (US$)', day), field('Limite mensal (US$)', month))),
       section('Avisos', 'Para o celular notificar, envie para outro número: mensagens que você manda para si mesmo costumam chegar sem som.', null,

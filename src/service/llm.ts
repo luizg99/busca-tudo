@@ -18,7 +18,7 @@ export interface ChatReply {
 
 export interface LlmClient {
   /** Pesquisa na web (ferramenta de busca da Anthropic) e devolve o texto final do modelo. */
-  search(req: { model: string; system: string; prompt: string }): Promise<{ text: string; usage: Usage }>;
+  search(req: { model: string; system: string; prompt: string; /** Máximo de pesquisas na web (padrão 6). */ maxSearches?: number }): Promise<{ text: string; usage: Usage }>;
   chat(req: { model: string; system: string; messages: ChatMessage[]; tools?: ToolDef[] }): Promise<ChatReply>;
 }
 
@@ -33,7 +33,7 @@ export function createAnthropicClient(apiKey: string): LlmClient {
   const client = new Anthropic({ apiKey });
 
   return {
-    async search({ model, system, prompt }) {
+    async search({ model, system, prompt, maxSearches }) {
       const messages: any[] = [{ role: 'user', content: prompt }];
       let inputTokens = 0;
       let outputTokens = 0;
@@ -45,7 +45,7 @@ export function createAnthropicClient(apiKey: string): LlmClient {
           max_tokens: 8192, // muitas ofertas por busca: com pouco espaço o JSON da resposta seria cortado
           system,
           messages,
-          tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 } as any],
+          tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxSearches ?? 6 } as any],
         });
         inputTokens += res.usage?.input_tokens ?? 0;
         outputTokens += res.usage?.output_tokens ?? 0;

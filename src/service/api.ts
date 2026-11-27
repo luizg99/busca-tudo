@@ -8,6 +8,7 @@ import { computeStats, searchSummary } from './reports';
 import type { SetupSession } from './setupChat';
 import type { WhatsAppStatus } from './notifier';
 import { normalizePhone } from './phone';
+import { getTargetSites, isValidTargetSites, MAX_TARGET_SITES, MIN_TARGET_SITES } from './target';
 import { getTrustedSites, normalizeTrustedList } from './trust';
 
 export const DEFAULT_MODELS = {
@@ -98,6 +99,7 @@ export function readSettings(db: Db) {
     sendReportsToWhatsApp: db.getSetting('send_reports_whatsapp') === '1',
     alertNumber: db.getSetting('alert_number') || undefined,
     trustedSites: getTrustedSites(db),
+    targetSites: getTargetSites(db),
   };
 }
 
@@ -157,6 +159,10 @@ export function createApi(deps: ApiDeps): Server {
             if (!n) throw new HttpError(400, 'Esse número não parece válido. Informe com DDD, por exemplo 11 99999-0000.');
             db.setSetting('alert_number', n);
           }
+        }
+        if (b.targetSites !== undefined) {
+          if (!isValidTargetSites(b.targetSites)) throw new HttpError(400, `Sites por busca: informe um número inteiro de ${MIN_TARGET_SITES} a ${MAX_TARGET_SITES}.`);
+          db.setSetting('target_sites', String(b.targetSites));
         }
         if (b.trustedSites !== undefined) {
           if (!Array.isArray(b.trustedSites)) throw new HttpError(400, 'A lista de sites confiáveis deve ser uma lista de endereços.');

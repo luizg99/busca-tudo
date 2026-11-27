@@ -8,6 +8,7 @@ import type { LlmClient } from './llm';
 import type { Notifier } from './notifier';
 import { learnSources, readSource } from './sources';
 import { verifyAtDestination } from './destination';
+import { getTargetSites } from './target';
 import { classifyFinding, extractLinks, getTrustedSites, isTrustedUrl, type PageLinks, type ResolveFinalUrl } from './trust';
 
 /** Cada conferência de link de saída espera pouco: são várias em paralelo e a verificação inteira não pode travar. */
@@ -246,7 +247,7 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
     }
     let outcome;
     try {
-      outcome = await runSmartCheck(llm, tracker, models, { trustedSites });
+      outcome = await runSmartCheck(llm, tracker, models, { trustedSites, targetSites: getTargetSites(db) });
     } catch (e) {
       const error = (e as Error).message;
       if (e instanceof CheckError) usages.push(...e.usages);

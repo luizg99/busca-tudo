@@ -1,6 +1,7 @@
 import type { Finding, Tracker } from '../shared/types';
 import type { Usage } from './cost';
 import { MIN_CONFIDENCE, parsePrice } from './decide';
+import { DEFAULT_TARGET_SITES, searchBudget } from './target';
 import type { LlmClient } from './llm';
 
 export class CheckError extends Error {
@@ -41,11 +42,12 @@ function trustedBlock(sites: string[]): string {
   ].join('\n');
 }
 
-function buildPrompt(t: Tracker, trustedSites: string[] = []): string {
+function buildPrompt(t: Tracker, trustedSites: string[] = [], targetSites = DEFAULT_TARGET_SITES): string {
   const lines = [`Acompanhamento: ${t.name}`, `Tipo: ${t.kind}`, `Objetivo: ${t.goal}`];
   if (t.kind === 'price' && t.onlyTrusted && trustedSites.length > 0) lines.push(trustedBlock(trustedSites));
   if (t.kind === 'price') {
     lines.push(
+      `Meta: reunir cerca de ${targetSites} ofertas de sites ou lojas diferentes (uma por site/página, sem repetir), incluindo lojas, sites de ofertas e blogs. ` +
       'Procure em várias lojas diferentes do mesmo produto e também em sites de ofertas e cupons (como Promobit e Pelando), ' +
       'em comparadores e em blogs de ofertas, que costumam trazer promoções e cupons de lojas conhecidas. Use consultas distintas ' +
       'para cobrir mais fontes (loja por loja e ofertas do dia), em vez de repetir a mesma busca.',
@@ -101,10 +103,14 @@ function normalize(raw: any): Finding {
   };
 }
 
-async function once(llm: LlmClient, t: Tracker, model: string, trustedSites: string[]): Promise<{ findings: Finding[]; usage: Usage }> {
+async function once(llm: LlmClient, t: Tracker, model: string, trustedSites: string[], targetSites?: number): Promise<{ findings: Finding[]; usage: Usage }> {
   let res;
   try {
-    res = await llm.search({ model, system: SYSTEM, prompt: buildPrompt(t, trustedSites) });
+    res = await llm.search({
+      model, system: SYSTEM, prompt: buildPrompt(t, trustedSites, targetSites),
+      // preço: mais pesquisas para cobrir a meta de sites; notícias seguem com o padrão
+      ...(t.kind === 'price' ? { maxSearches: searchBudget(targetSites ?? DEFAULT_TARGET_SITES) } : {}),
+    });
   } catch (e) {
     throw new CheckError(`Falha ao consultar a IA: ${(e as Error).message}`);
   }
@@ -126,14 +132,14 @@ export async function runSmartCheck(
   llm: LlmClient,
   t: Tracker,
   models: { routine: string; escalate: string },
-  opts: { trustedSites?: string[] } = {},
+  opts: { trustedSites?: string[]; targetSites?: number } = {},
 ): Promise<CheckOutcome> {
   const trusted = opts.trustedSites ?? [];
-  const first = await once(llm, t, models.routine, trusted);
+  const first = await once(llm, t, models.routine, trusted, opts.targetSites);
   if (!lowConfidence(first.findings)) return { findings: first.findings, usages: [first.usage], escalated: false };
   let second;
   try {
-    second = await once(llm, t, models.escalate, trusted);
+    second = await once(llm, t, models.escalate, trusted, opts.targetSites);
   } catch (e) {
     throw new CheckError((e as Error).message, [first.usage, ...((e as CheckError).usages ?? [])]);
   }
