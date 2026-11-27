@@ -218,3 +218,36 @@ describe('#9 alerta: cada fonte numa linha, com nome e link juntos', () => {
     expect(text.split('\n')).toContain('Loja: kabum.com.br — https://www.kabum.com.br/produto/1');
   });
 });
+
+describe('pedido de busca (ligou "só lojas confiáveis", mudou a lista ou o produto) força a busca completa', () => {
+  it('com fontes lendo bem e a última busca recente, o pedido faz a próxima verificação buscar de novo — uma vez só', async () => {
+    const s = setup();
+    s.pages['https://a.com/ps5'] = page('3.600,00');
+    s.script.push([item('https://a.com/ps5', 3600)]);
+    await runCheck(s.deps, s.t.id);
+    expect(s.searches()).toBe(1);
+    s.advance(15);
+    await runCheck(s.deps, s.t.id); // rotina normal: sem busca
+    expect(s.searches()).toBe(1);
+    s.db.requestSearch(s.t.id);
+    s.advance(15);
+    s.script.push([item('https://a.com/ps5', 3600)]);
+    await runCheck(s.deps, s.t.id);
+    expect(s.searches()).toBe(2);
+    expect(s.db.searchRequested(s.t.id)).toBe(false);
+    s.advance(15);
+    await runCheck(s.deps, s.t.id);
+    expect(s.searches()).toBe(2); // atendido: volta à rotina
+  });
+
+  it('o pedido respeita a espera depois de uma busca que FALHOU (não martela a API)', async () => {
+    const s = setup();
+    const first = await runCheck(s.deps, s.t.id); // sem resposta no script: a busca falha
+    expect(first.ok).toBe(false);
+    s.db.requestSearch(s.t.id);
+    s.advance(15);
+    const r = await runCheck(s.deps, s.t.id);
+    expect(r.ok).toBe(false); // ainda na espera
+    expect(s.searches()).toBe(1);
+  });
+});

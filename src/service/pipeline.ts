@@ -180,7 +180,8 @@ async function runCheckLocked(deps: PipelineDeps, trackerId: number, opts: RunOp
     const known = db.listSources(trackerId).filter(trustedOk);
     const readable = known.filter((s) => s.status !== 'unreadable');
     const lastDiscovery = db.lastDiscoveryAt(trackerId);
-    const discoveryDue = (!lastDiscovery || hoursSince(lastDiscovery) >= DISCOVERY_EVERY_HOURS) && !searchCoolingDown;
+    // além da busca diária, um pedido (usuário mudou produto, lojas confiáveis...) força a busca na próxima verificação
+    const discoveryDue = (!lastDiscovery || hoursSince(lastDiscovery) >= DISCOVERY_EVERY_HOURS || db.searchRequested(trackerId)) && !searchCoolingDown;
     let anySuspect = false;
     // a última busca completa não achou nenhuma loja: não repete a cada verificação, só depois de FALLBACK_MIN_HOURS.
     // Não vale se as fontes sumiram por outro motivo (produto mudou, lista de lojas mudou): aí há um pedido de busca.

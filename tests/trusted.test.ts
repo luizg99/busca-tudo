@@ -280,6 +280,7 @@ describe('API: lista de sites confiáveis e chave por acompanhamento', () => {
     db.upsertSource(created.json.id, { url: 'https://www.amazon.com.br/dp/x', status: 'ok' });
     const patched = await call('PATCH', `/trackers/${created.json.id}`, { onlyTrusted: false });
     expect(patched.json.onlyTrusted).toBe(false);
+    expect(db.searchRequested(created.json.id)).toBe(true); // mudou a regra de lojas: busca nova na próxima verificação
     expect(db.listSources(created.json.id)).toHaveLength(1);
     expect((await call('POST', '/trackers', { ...goodInput, onlyTrusted: false })).json.onlyTrusted).toBe(false);
   });

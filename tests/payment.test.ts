@@ -40,6 +40,17 @@ describe('pagamento: à vista ou só parcelado', () => {
     expect(out.findings[1].payment).toBeUndefined();
   });
 
+  it('a observação do pagamento é curta: só o essencial, sem frase longa nem parênteses aninhados', async () => {
+    const llm: LlmClient = {
+      async search() {
+        return { text: JSON.stringify({ findings: [{ found: true, value: 3905, currency: 'BRL', source_url: 'https://a.com/x', payment: 'vista', payment_note: 'Pix (pacote com Astro Bot e Gran Turismo 7; preço parcelado de R$ 4.199 em até 10x)', evidence: 'e', confidence: 0.9 }] }), usage };
+      },
+      async chat() { throw new Error('x'); },
+    };
+    const out = await runSmartCheck(llm, tracker, { routine: 'r', escalate: 'e' });
+    expect(out.findings[0].paymentNote).toBe('Pix');
+  });
+
   it('o alerta informa como o menor preço é pago', () => {
     const d = decideAlert(tracker, [f({ payment: 'parcelado', paymentNote: '10x sem juros' })], { isNew: () => true, lastValue: 3600, now: '2026-01-02T12:00:00Z' });
     expect(d.alert!.text).toContain('Pagamento: só parcelado (10x sem juros)');

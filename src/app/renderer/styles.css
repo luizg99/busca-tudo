@@ -126,6 +126,12 @@ button.metric:hover { border-color: var(--accent); background: var(--accent-soft
 .finding .val { font-weight: 650; min-width: 96px; }
 .finding .info { min-width: 0; flex: 1; }
 .finding .info div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.finding { align-items: center; }
+.finding .t strong { margin-right: 4px; }
+.finding .t a.link { color: var(--accent); text-decoration: none; cursor: pointer; }
+.finding .t a.link:hover { text-decoration: underline; }
+.finding .tags { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 230px; }
+.finding .small { font-size: 12px; }
 
 /* ---------- Chat ---------- */
 .chat { display: flex; flex-direction: column; height: calc(100vh - 150px); min-height: 380px; }

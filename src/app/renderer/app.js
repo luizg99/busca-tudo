@@ -129,9 +129,12 @@ function metric(label, value, sub, onclick) {
 }
 
 /** "à vista (Pix)" / "só parcelado (10x sem juros)"; vazio quando não se sabe (não inventa). */
+/** Só o começo da observação (antes de parênteses, ; ou ,), até 30 caracteres. */
+const shortNote = (n) => { const first = String(n || '').split(/[(;,]/)[0].trim(); return first.length > 30 ? `${first.slice(0, 29).trimEnd()}…` : first; };
 function payLabel(payment, note) {
   if (payment !== 'vista' && payment !== 'parcelado') return '';
-  return `${payment === 'vista' ? 'à vista' : 'só parcelado'}${note ? ` (${note})` : ''}`;
+  const n = shortNote(note);
+  return `${payment === 'vista' ? 'à vista' : 'só parcelado'}${n ? ` · ${n}` : ''}`;
 }
 const dot = (...parts) => parts.filter(Boolean).join(' · ');
 
@@ -260,6 +263,53 @@ async function viewTrackers() {
   return h('div', { class: 'page' }, head, h('div', { class: 'stack' }, cards));
 }
 
+/**
+ * As ofertas de uma consulta, UMA linha por oferta: a leitura da fonte e o achado da busca (mesma página) ficam juntos.
+ * Linha: valor · Loja — título (é o link da página) · etiquetas. Observações (cupom, onde foi achado, avisos) numa linha menor.
+ */
+function offerRows(c) {
+  const keyOf = (u) => { try { const x = new URL(u); return `${x.hostname.replace(/^www\./, '')}${x.pathname}`; } catch { return ''; } };
+  const rows = new Map();
+  const nothing = [];
+  (c.findings || []).forEach((f, i) => {
+    if (!f.found) { nothing.push(f); return; }
+    rows.set(keyOf(f.sourceUrl) || `f${i}`, { f, url: f.sourceUrl });
+  });
+  (c.sources || []).forEach((r, i) => {
+    const k = keyOf(r.url) || `s${i}`;
+    const row = rows.get(k);
+    if (row) row.r = r; else rows.set(k, { r, url: r.url });
+  });
+  const out = [...rows.values()].map(({ f, r, url }) => {
+    const value = f?.value ?? (r?.ok ? r.value : undefined);
+    const store = f?.store || hostOf(url || '');
+    const title = f?.title || r?.label || '';
+    const method = r?.ok ? METHOD[r.method] || r.method : '';
+    const notes = [
+      method ? `lido por ${method}` : '',
+      f?.viaUrl ? `achado em ${f.via || hostOf(f.viaUrl)}` : f?.via ? `achado em ${f.via}` : '',
+      f?.coupon ? `cupom ${f.coupon}` : '',
+      f?.claimedValue != null ? `o site da oferta informava ${money(f.claimedValue, f.currency)}` : '',
+    ].filter(Boolean).join(' · ');
+    const warn = f?.ignoredReason ? `Ignorada: ${f.ignoredReason}` : f?.unverified ? 'Preço não conferido na página da loja (informado pela busca).' : (!f && r && !r.ok ? r.error : '');
+    const pay = f?.payment ? badge(payLabel(f.payment, f.paymentNote), f.payment === 'vista' ? 'ok' : 'warn') : null;
+    if (pay && f.paymentNote) pay.title = f.paymentNote;
+    const label = title ? ` — ${title}` : '';
+    return h('div', { class: 'finding' },
+      h('span', { class: f?.ignoredReason || (!f && r && !r.ok) ? 'val muted' : 'val' }, value != null ? money(value, f?.currency) : 'sem preço'),
+      h('div', { class: 'info' },
+        h('div', { class: 't', title: title || url || '' }, h('strong', {}, store), url ? link(url, label || ` — ${url}`) : label),
+        notes ? h('div', { class: 'muted small' }, notes) : null,
+        warn ? h('div', { class: f?.ignoredReason || f?.unverified ? 'warn small' : 'bad small' }, warn) : null),
+      h('div', { class: 'tags' },
+        pay,
+        f?.ignoredReason ? badge('ignorada', 'warn') : f?.unverified ? badge('não conferido', 'warn') : !f && r && !r.ok ? badge('falhou', 'bad') : null,
+        f && f.confidence < 0.8 ? badge(`${Math.round(f.confidence * 100)}%`, f.confidence >= 0.6 ? 'ok' : 'warn') : null));
+  });
+  nothing.forEach((f) => out.push(h('div', { class: 'finding' }, h('span', { class: 'val muted' }, 'nada'), h('div', { class: 'info' }, h('div', { class: 'muted' }, f.evidence)))));
+  return out;
+}
+
 async function viewDetail(t, focusId) {
   stopPoll();
   const [stats, recent, sources] = await Promise.all([api('GET', `/trackers/${t.id}/stats`), api('GET', `/trackers/${t.id}/checks?limit=50`), api('GET', `/trackers/${t.id}/sources`).catch(() => [])]);
@@ -282,22 +332,7 @@ async function viewDetail(t, focusId) {
     h('div', { class: 'hist-head' }, h('strong', {}, when(c.at)), c.ok ? badge('ok', 'ok') : badge('falhou', 'bad'), c.mode ? badge(MODE[c.mode] || c.mode, c.mode === 'routine' ? 'ok' : 'accent') : null,
       h('span', { class: 'muted small' }, `${c.model} · US$ ${c.costUsd.toFixed(4)}`)),
     c.ok ? null : h('div', { class: 'alert', style: 'margin-top:8px' }, icon('alert'), h('span', {}, c.error)),
-    (c.sources || []).map((r) => h('div', { class: 'finding' },
-      h('span', { class: 'val' }, r.ok ? money(r.value) : 'sem preço'),
-      h('div', { class: 'info' }, h('div', {}, r.label || hostOf(r.url)), h('div', { class: r.ok ? 'muted' : 'bad' }, r.ok ? `lido por ${METHOD[r.method] || r.method}` : r.error)),
-      badge(r.ok ? 'fonte' : 'falhou', r.ok ? 'ok' : 'bad'))),
-    c.findings.map((f) => h('div', { class: 'finding' },
-      h('span', { class: 'val' }, f.found ? (f.value != null ? money(f.value, f.currency) : '—') : 'nada'),
-      h('div', { class: 'info' }, h('div', {}, f.found ? (f.title || f.evidence || '') : f.evidence), f.sourceUrl ? h('div', {}, link(f.sourceUrl)) : null,
-        f.ignoredReason ? h('div', { class: 'warn small' }, `Ignorada: ${f.ignoredReason}`) : null,
-        f.viaUrl ? h('div', { class: 'muted small' }, 'Achado em: ', link(f.viaUrl)) : null,
-        f.coupon ? h('div', { class: 'small' }, `Cupom: ${f.coupon}`) : null,
-        f.claimedValue != null ? h('div', { class: 'muted small' }, `O site da oferta informava ${money(f.claimedValue, f.currency)}; vale o preço lido na loja.`) : null,
-        f.unverified ? h('div', { class: 'warn small' }, 'Preço não conferido na página da loja (informado pela busca).') : null),
-      f.unverified ? badge('não conferido', 'warn') : null,
-      f.payment ? badge(payLabel(f.payment, f.paymentNote), f.payment === 'vista' ? 'ok' : 'warn') : null,
-      f.ignoredReason ? badge('ignorada', 'warn') : f.via ? badge(`via ${f.via}${f.store ? ` · ${f.store}` : ''}`, 'accent') : null,
-      f.found ? badge(`${Math.round(f.confidence * 100)}%`, f.confidence >= 0.6 ? 'ok' : 'warn') : null))));
+    offerRows(c)));
   view.replaceChildren(h('div', { class: 'page' },
     h('div', { class: 'page-head' }, btn('Voltar', { kind: 'ghost', onclick: () => render() }, 'back'),
       h('div', { class: 'grow' }, h('h1', {}, t.name), h('div', { class: 'sub' }, `${t.goal} · alerta: ${COND(t.alertCondition)} · resumo ${DIGEST[t.digest]}`))),
