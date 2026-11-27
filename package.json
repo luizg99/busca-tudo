@@ -1,6 +1,6 @@
 {
   "name": "busca-tudo",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Acompanhamentos pessoais com IA, alertas no WhatsApp e relatórios",
   "main": "dist/app/main.js",

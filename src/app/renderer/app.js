@@ -101,6 +101,9 @@ function setSpend(spent, limit, over) {
   document.getElementById('spend-sub').textContent = over ? 'Limite atingido: verificações pausadas' : limit ? `Limite diário · ${Math.round(pct)}% usado` : 'Sem limite diário';
 }
 
+// versão do app na barra lateral: confirma que a janela aberta tem os ajustes da versão instalada
+Promise.resolve(bt.version?.()).then((v) => { const el = document.getElementById('app-version'); if (el && v) el.textContent = `versão ${v}`; }).catch(() => {});
+
 async function refreshStatus() {
   const r = await bt.status();
   if (!r.ok) {
@@ -112,6 +115,8 @@ async function refreshStatus() {
   }
   const s = (lastStatus = r.data);
   setSys('sys-service', 'ok', 'rodando');
+  const ver = document.getElementById('app-version');
+  if (ver) ver.title = `Serviço${s.version ? ` v${s.version}` : ''} · build ${s.buildId ? new Date(Number(s.buildId)).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`;
   setSys('sys-wa', s.whatsapp === 'ready' ? 'ok' : 'warn', s.whatsapp === 'ready' ? 'conectado' : s.whatsapp === 'qr' ? 'escaneie o QR' : 'desconectado');
   setSys('sys-key', s.hasApiKey ? 'ok' : 'bad', s.hasApiKey ? 'configurada' : 'faltando');
   try { dailyLimit = (await bt.api('GET', '/settings')).data?.limitDayUsd; } catch { /* mantém o anterior */ }

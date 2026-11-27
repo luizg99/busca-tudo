@@ -27,6 +27,8 @@ export interface ApiDeps {
   runCheckNow(trackerId: number): Promise<CheckResultSummary>;
   /** Identifica o código em execução; o app usa para reiniciar um serviço desatualizado. */
   buildId: string;
+  /** Versão do app (package.json). */
+  version?: string;
   shutdown(): void;
   /** Envia uma mensagem de teste pelo WhatsApp conectado. */
   sendTestMessage(): Promise<{ ok: boolean; error?: string }>;
@@ -116,6 +118,7 @@ export function createApi(deps: ApiDeps): Server {
       return send(res, 200, {
         running: true,
         buildId: deps.buildId,
+        ...(deps.version ? { version: deps.version } : {}),
         whatsapp: wa.status,
         ...(wa.qr ? { qr: wa.qr } : {}),
         hasApiKey: deps.hasApiKey(),

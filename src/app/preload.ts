@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('buscaTudo', {
   api: (method: string, path: string, body?: unknown) => ipcRenderer.invoke('api', method, path, body),
   status: () => ipcRenderer.invoke('status'),
+  version: () => ipcRenderer.invoke('app-version'),
   startService: () => ipcRenderer.invoke('start-service'),
   startupGet: () => ipcRenderer.invoke('startup-get'),
   startupSet: (enabled: boolean) => ipcRenderer.invoke('startup-set', enabled),

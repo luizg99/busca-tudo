@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
+import { readAppVersion } from '../shared/version';
 import { createApi, DEFAULT_MODELS, readSettings } from './api';
 import { estimateCostUsd, overLimit, type Usage } from './cost';
 import { openDb } from './db';
@@ -105,6 +106,7 @@ async function main(): Promise<void> {
       return delivered ? { ok: true } : { ok: false, error: 'Não consegui enviar a mensagem de teste. Veja o service.log.' };
     },
     buildId: String(statSync(__filename).mtimeMs),
+    version: readAppVersion(),
     shutdown: () => void shutdown(),
   });
 

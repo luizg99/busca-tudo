@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { readAppVersion } from '../shared/version';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -54,6 +55,7 @@ function registerIpc(): void {
       }
     }),
   );
+  ipcMain.handle('app-version', () => readAppVersion());
   ipcMain.handle('status', async () => {
     const r = await call((c) => c.get('/status'));
     if (r.ok && r.data.qr) r.data.qrImage = await QRCode.toDataURL(r.data.qr, { margin: 1, width: 240 });
