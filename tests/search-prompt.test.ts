@@ -26,6 +26,19 @@ describe('a busca pede TODAS as ofertas, não só a mais barata', () => {
     expect(prompt).not.toMatch(/Informe o menor valor/i);
   });
 
+  it('preço: manda procurar também em sites de ofertas/cupons e blogs, e em várias lojas diferentes', async () => {
+    const { prompt } = await promptOf(mk('price'));
+    expect(prompt).toMatch(/Promobit/);
+    expect(prompt).toMatch(/Pelando/);
+    expect(prompt).toMatch(/blogs de ofertas/i);
+    expect(prompt).toMatch(/várias lojas diferentes/i);
+  });
+
+  it('notícias não recebem essa instrução de lojas', async () => {
+    const { prompt } = await promptOf(mk('news'));
+    expect(prompt).not.toMatch(/Promobit/);
+  });
+
   it('a resposta fica compacta (evidência em uma frase) para caber muitas ofertas sem cortar o JSON', async () => {
     const { system } = await promptOf(mk('price'));
     expect(system).toMatch(/uma frase curta/i);

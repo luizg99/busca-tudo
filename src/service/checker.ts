@@ -44,6 +44,13 @@ function trustedBlock(sites: string[]): string {
 function buildPrompt(t: Tracker, trustedSites: string[] = []): string {
   const lines = [`Acompanhamento: ${t.name}`, `Tipo: ${t.kind}`, `Objetivo: ${t.goal}`];
   if (t.kind === 'price' && t.onlyTrusted && trustedSites.length > 0) lines.push(trustedBlock(trustedSites));
+  if (t.kind === 'price') {
+    lines.push(
+      'Procure em várias lojas diferentes do mesmo produto e também em sites de ofertas e cupons (como Promobit e Pelando), ' +
+      'em comparadores e em blogs de ofertas, que costumam trazer promoções e cupons de lojas conhecidas. Use consultas distintas ' +
+      'para cobrir mais fontes (loja por loja e ofertas do dia), em vez de repetir a mesma busca.',
+    );
+  }
   if (t.include.length) lines.push(`Deve incluir/considerar: ${t.include.join('; ')}`);
   if (t.exclude.length) lines.push(`Deve excluir/ignorar: ${t.exclude.join('; ')}`);
   lines.push(
