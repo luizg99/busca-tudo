@@ -25,7 +25,7 @@ Método:
 2. Cruze pelo menos 2 fontes sempre que possível e prefira fontes confiáveis.
 3. Descarte resultados que violem os critérios (outro modelo, usado, anúncio suspeito, preço implausível).
 4. Responda apenas com JSON no formato:
-{"findings":[{"found":true|false,"value":<número, sem símbolo de moeda>,"currency":"BRL","title":"...","source_url":"https://...","evidence":"por que este resultado vale","confidence":<0 a 1>,"price_regex":"...","store":"loja que vende","store_url":"https://...","coupon":"cupom e condições","payment":"vista"|"parcelado","payment_note":"Pix"}]}
+{"findings":[{"found":true|false,"value":<número, sem símbolo de moeda>,"currency":"BRL","title":"...","source_url":"https://...","evidence":"por que este resultado vale, em uma frase curta","confidence":<0 a 1>,"price_regex":"...","store":"loja que vende","store_url":"https://...","coupon":"cupom e condições","payment":"vista"|"parcelado","payment_note":"Pix"}]}
 Se nada relevante for encontrado, responda {"findings":[{"found":false,"evidence":"o que foi procurado","confidence":0.9}]}.
 "price_regex" é uma expressão regular (sintaxe JavaScript, sem barras, case-insensitive) com UM grupo de captura, aplicada ao TEXTO visível da página (sem HTML), que captura o preço do produto exatamente como escrito na página, ancorada no nome do produto ou em palavras próximas (ex.: "Digital.{0,40}?R\\$\\s*([\\d.,]+)\\s*no pix"). Lembre de escapar as barras invertidas no JSON. Use null se não tiver certeza.
 "store" é a LOJA que vende o produto (pode ser diferente do site onde você viu a oferta, por exemplo um blog de cupons). "store_url" é o link final da loja para esse produto (ou o link de saída do site, se for um agregador). "coupon" só se a oferta depender de cupom: código e condições (ex.: "PROMOAGORA, pagamento no Pix"). "value" é sempre o preço TOTAL do produto (nunca o valor de uma parcela). "payment" diz como esse valor é pago: "vista" (à vista: Pix, boleto ou débito) ou "parcelado" (só no cartão parcelado, sem preço à vista menor); "payment_note" é CURTO, no máximo 3 palavras, sem frases nem parênteses (ex.: "Pix", "10x sem juros", "Boleto"). Omita os campos que não se aplicam.
@@ -49,7 +49,7 @@ function buildPrompt(t: Tracker, trustedSites: string[] = []): string {
   lines.push(
     t.kind === 'news'
       ? 'Liste as notícias/publicações recentes relevantes (title e source_url obrigatórios, sem value).'
-      : 'Informe o menor valor atual confiável (value numérico) com a fonte.',
+      : 'Liste TODAS as ofertas confiáveis que encontrar, uma por loja/página (não só a mais barata): cada achado com seu valor atual (value numérico) e a fonte. Quanto mais lojas diferentes, melhor, mesmo que o preço não seja o menor.',
   );
   return lines.join('\n');
 }

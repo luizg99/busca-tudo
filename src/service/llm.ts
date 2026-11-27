@@ -42,7 +42,7 @@ export function createAnthropicClient(apiKey: string): LlmClient {
       for (let turn = 0; turn <= MAX_PAUSE_TURNS; turn++) {
         const res: any = await client.messages.create({
           model,
-          max_tokens: 4096,
+          max_tokens: 8192, // muitas ofertas por busca: com pouco espaço o JSON da resposta seria cortado
           system,
           messages,
           tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 } as any],
